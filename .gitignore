@@ -25,5 +25,11 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# 审计用临时克隆，不入库
+# 运行时产物
+data/
+output/
+*.db
+*.db-*
+
+# 审计用临时克隆与冒烟结果，不入库
 .analysis/

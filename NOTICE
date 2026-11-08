@@ -1,0 +1,22 @@
+NOTICE
+======
+
+This project (comfyui-light-mcp) is licensed under the MIT License (see LICENSE).
+
+Third-party code adapted into this repository:
+
+1. MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript (MIT)
+   https://github.com/MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript
+   Audited base commit: 765c713
+   - Files containing code adapted from that project carry a header comment:
+     "// Adapted from MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript (MIT), commit 765c713".
+   - Such adaptations retain the original copyright notice:
+     Copyright (c) 2026 MetaBrain-Labs
+   - Original license text:
+     https://github.com/MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript/blob/main/LICENSE
+
+2. Comfy-Org/comfy-mcp (AGPL-3.0 OR commercial) was used as a DESIGN REFERENCE ONLY.
+   No code from that project is included here.
+
+Runtime dependencies (each governed by its own license, not merged into this
+source tree): better-sqlite3 (MIT), ws (MIT), zod (MIT).

@@ -98,6 +98,18 @@ comfyui-light-mcp/
 
 明确不引入：axios（用 Node 22 原生 fetch）、express/cors（v1 仅 stdio）、dotenv（MCP 客户端传 env；需要时作 dev 依赖本地调试）、i18next（v1 工具文案英文，错误消息中英混合不做多语言体系）。
 
+配置面（`src/config.ts`，环境变量 → zod 校验 → 冻结对象）：
+
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `COMFYUI_URL` | `http://127.0.0.1:8188` | 只连已启动实例，不做启动管理 |
+| `WORKFLOWS_DIR` | `./workflows` | 工作流 + manifest 目录 |
+| `DATA_DIR` | `./data` | SQLite 所在目录 |
+| `OUTPUT_DIR` | `./output` | 输出落盘根目录（受 path-jail） |
+| `AUTO_SAVE_OUTPUTS` | `true` | job 成功即落盘 |
+| `MAX_IN_FLIGHT` | `1` | 在途窗口（submitting/submission_unknown/queued/executing） |
+| `MAX_QUEUED_JOBS` | `1` | ComfyUI 队列占用窗口（仅 queued），须 ≤ MAX_IN_FLIGHT |
+
 **决策：v1 传输只做 stdio**。Windows 本地 + MCP 客户端拉起的场景下 stdio 是唯一必要形态；HTTP 传输留待确有需求再加（metabrain 的会话管理骨架已备份在审计记录中，加回成本低）。
 
 ## 4. 核心模块接口设计（关键代码草案）
@@ -109,9 +121,9 @@ comfyui-light-mcp/
 ```ts
 // core/client/comfy-http.ts
 export interface ComfyClient {
-  submitPrompt(graph: WorkflowGraph, opts?: { promptId?: string }): Promise<PromptAccepted>;
+  submitPrompt(graph: WorkflowGraph, opts?: { promptId?: string; clientId?: string }): Promise<PromptAccepted>;
     // PromptAccepted = { promptId, number, nodeErrors }
-    // nodeErrors 非空 → 抛 NodeValidationError（metabrain 缺失项，见审计 §1.4）
+    // nodeErrors 原样返回（结构以真实环境验证为准，见 003 文档），失败语义由 job 层决定
   getHistory(promptId: string): Promise<HistoryEntry | null>;
   getQueue(): Promise<QueueInfo>;                 // 恢复与取消用（metabrain 未用 /queue）
   interrupt(promptId?: string): Promise<void>;    // 语义待验证，见风险 Q1
@@ -205,11 +217,15 @@ export interface JobManager {
   onJobSettled(cb: (job: Job) => void): () => void;   // 通知持久化 + batch 汇总刷新
 }
 
-// core/batch/scheduler.ts —— in-flight 窗口
-//   maxInFlight = 1（默认，串行）：上一 job 终态后才提交下一个
-//   > 1：流水线预填充 ComfyUI 队列（ComfyUI 本身单 GPU 串行执行，这只是隐藏提交延迟）
+// core/batch/scheduler.ts —— 双窗口提交控制
+//   maxInFlight（默认 1）：在途上限 = 状态 ∈ {submitting, submission_unknown, queued, executing} 的 job 数
+//     —— 限制我们对 ComfyUI 的总未决提交量（含正在执行的那 1 个）
+//   maxQueuedJobs（默认 1）：排队上限 = 状态 ∈ {queued}（已入 ComfyUI 队列、尚未开始执行）的 job 数
+//     —— 限制我们占用 ComfyUI 队列的深度，避免挤占用户自己在 UI 里的排队
+//   提交下一个 pending job 的条件：inFlight < maxInFlight 且 queued < maxQueuedJobs
+//   两值均默认 1（完全串行：上一个终态后才提交下一个）；maxQueuedJobs ≤ maxInFlight 由 config 校验
 export interface Scheduler {
-  /** 窗口空出 → 从 pending 中按 idx 取下一个 job 交给 JobManager.submit */
+  /** 双窗口任一空出 → 从 pending 中按 idx 取下一个 job 交给 JobManager.submit */
 }
 ```
 
@@ -223,7 +239,8 @@ export interface Engine {
   runWorkflow(req: RunRequest): Promise<BatchHandle | ValidationResult>;
     // dryRun=true → 只做参数校验返回逐 run 错误清单，不提交
   getBatch(id: string, page?: Page): BatchView;        // 不存在 → NotFoundError
-  getResult(ref: { batchId: string; index: number }, opts?: ResultOptions): ResultView;
+  getResult(ref: { batchId: string; index: number }, opts?: { url?: boolean }): ResultView;
+    // outputs 默认本地绝对路径（AUTO_SAVE 已落盘；未落盘则此刻补下载）
 }
 ```
 
@@ -256,51 +273,69 @@ CREATE TABLE jobs (
   batch_id     TEXT NOT NULL REFERENCES batches(id),
   idx          INTEGER NOT NULL,             -- batch 内序号，Agent 引用句柄
   label        TEXT,
-  prompt_id    TEXT,                         -- ComfyUI 句柄，提交成功后回填
   params_json  TEXT NOT NULL,                -- 调用方原始参数（审计留痕）
-  resolved_json TEXT NOT NULL,               -- 覆写后实际值（含 seed 实际值，可复现）
-  status       TEXT NOT NULL,                -- 见 6.2
-  attempts     INTEGER NOT NULL DEFAULT 0,
+  resolved_json TEXT,                        -- 覆写后实际值（含 seed 实际值，可复现）；invalid 态为空
+  status       TEXT NOT NULL,                -- 见 6.2（含 invalid / submission_unknown）
+  attempt_no   INTEGER NOT NULL DEFAULT 0,   -- 当前尝试序号（= job_attempts 行数）
+  prompt_id    TEXT,                         -- 当前尝试的 ComfyUI 句柄（历史尝试见 job_attempts）
   error_json   TEXT,                         -- {code, message(clip), nodeErrors?}
-  outputs_json TEXT,                         -- OutputRef[]（history 收获）
+  outputs_json TEXT,                         -- OutputRef[]（history 收获 + 本地落盘路径）
   submitted_at TEXT, started_at TEXT, finished_at TEXT,
   UNIQUE (batch_id, idx)
 );
+CREATE TABLE job_attempts (                  -- 只增不改：保留完整重试历史
+  id           TEXT PRIMARY KEY,
+  job_id       TEXT NOT NULL REFERENCES jobs(id),
+  attempt_no   INTEGER NOT NULL,
+  prompt_id    TEXT,                         -- 该次尝试的 ComfyUI 句柄
+  status       TEXT NOT NULL,                -- 该次尝试终态
+  error_json   TEXT,
+  submitted_at TEXT, started_at TEXT, finished_at TEXT,
+  UNIQUE (job_id, attempt_no)
+);
 CREATE INDEX idx_jobs_batch  ON jobs(batch_id, idx);
 CREATE INDEX idx_jobs_prompt ON jobs(prompt_id);
+CREATE INDEX idx_attempts_prompt ON job_attempts(prompt_id);
 CREATE INDEX idx_jobs_recover ON jobs(status)
-  WHERE status IN ('submitting','queued','executing');   -- 部分索引，恢复扫描
+  WHERE status IN ('submitting','submission_unknown','queued','executing');   -- 部分索引，恢复扫描
 ```
 
 ### 6.2 状态机
 
 ```
 Job:   pending ─→ submitting ─→ queued ─→ executing ─┬→ succeeded
-          ↑            │           │        │         ├→ failed     ─(attempts<max)─→ pending（重试）
-          │            │           │        │         ├→ timeout    ─(同上，先 interrupt)
-          └────────────┴───────────┴────────┴─────────┴→ cancelled
+          ↑            │            │        │        ├→ failed     ─(attempt_no<max)─→ pending（重试）
+          │            │            │        │        ├→ timeout    ─(同上，先 interrupt)
+          │            │            │        │        └→ cancelled
+          │            ↓            ↓        ↓
+          │      submission_unknown ─┬→ (恢复时在 /queue 或 /history 中找到) → queued/executing/终态，继续跟踪
+          │                          └→ (两处均无) → failed(error=submission_unknown)，【禁止自动重提】
+          └→ invalid（参数校验失败，创建时即定，终态，不占提交窗口）
         （提交抛错/网络失败）（/queue 中）（WS executing）（终态；WS+history 双确认）
 
 Batch: running ─┬→ completed   （全部 succeeded）
-                ├→ partial     （成功与失败并存）
-                ├→ failed      （全部 failed/timeout）
+                ├→ partial     （成功与 invalid/failed/timeout/submission_unknown 并存）
+                ├→ failed      （全部非 succeeded）
                 └→ cancelled   （取消且无在途）
 ```
 
 规则：
 
+- **部分容错（已确认决策）**：参数校验失败的 run **不阻塞整批**——合法 run 正常创建提交，非法 run 以 `invalid` 终态独立落库（error 逐字段记录原因），batch 汇总中计入失败侧。`run_workflow` 响应带 `invalid_runs` 清单，Agent 可一次看到全部错误并自愈重提。
 - **失败隔离**：单 job 失败不影响 batch 内其他 job（默认 `continue_on_error=true`，batch 级可配 false：失败即取消剩余 pending）。
-- **重试**：仅对 `failed/timeout` 且 `attempts < maxRetries`（默认 1，即不自动重试；显式配置才启用）。重试 = 新 prompt_id 重新提交，attempts+1，历史尝试保留在 error_json 累积数组。
+- **重试**：仅对 `failed/timeout` 且 `attempt_no < maxRetries`（默认 0，即不自动重试；显式配置才启用）。每次尝试一行 `job_attempts`（含独立 prompt_id 与终态），历史只增不改。
+- **submission_unknown（已确认决策）**：`submitting` 态遇网络失败/进程崩溃 → 入 `submission_unknown`。恢复判定：能查到（`/queue` 或 `/history/{prompt_id}`）→ 继续跟踪；查不到 → 终态 `failed(error=submission_unknown)`，**禁止自动重提**（无法排除 ComfyUI 已收到且将执行的可能，宁可少不可重）。若真实环境验证客户端可指定 prompt_id（见 003 验证），则提交前先固化 prompt_id，`submission_unknown` 的可查性大幅提高，但"查不到即不重提"原则不变。
 - **timeout**：batch 级 `timeoutMs` 可选；触发时先 `interrupt`（尽力）再置 timeout 态，不静默等 10 分钟（metabrain 缺陷：超时后远端继续跑，审计 §1.3）。
 - **幂等性**：
   - batch 级：`idempotency_key` 唯一约束，重复 create 返回既有 batch（24h TTL 内）。
-  - job 级：`(batch_id, idx)` 唯一；恢复场景先查 `/history/{prompt_id}` 再决定是否重提，不做盲目双提交。
+  - job 级：`(batch_id, idx)` 唯一；`submission_unknown` 查证流程见上，不做盲目双提交。
 - **结果关联**：`executed` 事件 + `/history/{prompt_id}` 双通道收获 outputs（images/gifs/音频均收，metabrain 只认 images，审计 §1.3），统一转 `OutputRef{filename, subfolder, type, kind}` 落库。
+- **输出落盘（已确认决策）**：`AUTO_SAVE_OUTPUTS=true`（默认）时 job 终态成功即经 `/view` 下载到 `OUTPUT_DIR/<batch_id>/<idx>/<filename>`（重名自动加序号），`OutputRef.local_path` 记录绝对路径；关闭则 get_result 时按需下载。
 - **分页**：`get_batch` 按 `(batch_id, idx)` 排序，`limit`（默认 20，上限 100）+ `offset`；v1 用 offset（SQLite 窗口查询），规模到万级再评估 cursor。
 - **重启恢复**（`recovery.ts`，启动时一次）：
-  1. 扫部分索引得存量在途 job；
-  2. 有 `prompt_id` → `/history/{id}`：有记录 → 收获 outputs 定终态；无 → 查 `/queue`：在队列 → 重新挂事件等待；都不在 → 标 `failed`（error=`lost_after_restart`），若允许重试则转 pending；
-  3. 无 `prompt_id`（crash 于提交瞬间）→ 视为未提交，转 pending 重提（params_resolved 已固化，seed 不漂移）；
+  1. 扫部分索引得存量在途 job（含 `submission_unknown`）；
+  2. 有 `prompt_id` → `/history/{id}`：有记录 → 收获 outputs 定终态；无 → 查 `/queue`：在队列 → 重新挂事件等待；都不在 → `submission_unknown`→`failed`（见上，不自动重提）；
+  3. 无 `prompt_id` 且状态为 `submitting` → 置 `submission_unknown` 按上款流程查证（默认无 client 指定 id 时不可查 → 终态 failed，不重提）；
   4. 恢复后 scheduler.tick() 接管。
 
 ## 7. 核心 MCP 工具 Schema 草案（4 个）
@@ -348,7 +383,7 @@ Batch: running ─┬→ completed   （全部 succeeded）
     } } }
 ```
 
-返回：`{batch_id, total, status, invalid_runs?: [{index, errors:[{param, message}]}]}`（校验失败且全部 run 无效则不创建 batch，部分无效默认拒绝整批并逐条报告——显式、可自愈）。
+返回：`{batch_id, total, status, valid_count, invalid_runs?: [{index, errors:[{param, message}]}]}`。**部分容错**：非法 run 以 invalid 终态落库、错误逐字段返回；合法 run 照常提交。仅当全部 run 非法时不向 ComfyUI 提交任何任务（batch 仍创建，直接进入 failed 终态，保留错误现场）。
 
 ### get_batch
 
@@ -371,18 +406,18 @@ Batch: running ─┬→ completed   （全部 succeeded）
 
 ```json
 { "name": "get_result",
-  "description": "取单个 job 的详细结果：实际参数（含 seed）+ 输出文件清单（/view URL）。可选 save 落盘到本地输出目录。",
+  "description": "取单个 job 的详细结果：实际参数（含 seed）+ 输出文件本地绝对路径（AUTO_SAVE 默认已落盘；未落盘则此处下载）。",
   "inputSchema": {
     "type": "object", "required": ["batch_id", "index"],
     "properties": {
       "batch_id": { "type": "string" },
       "index":    { "type": "integer", "minimum": 0 },
-      "save":     { "type": "boolean", "description": "下载输出到本地 OUTPUT_DIR（默认 false，仅返回 URL）" },
-      "save_dir": { "type": "string", "description": "可选子目录（受 path-jail 约束，禁止 .. 与绝对路径）" }
+      "url":      { "type": "boolean", "description": "额外附带 /view 直链（默认 false，仅本地路径）" },
+      "save_dir": { "type": "string", "description": "覆盖落盘子目录（受 path-jail 约束，禁止 .. 与绝对路径）" }
     } } }
 ```
 
-返回：`{index, status, params_resolved, outputs: [{kind, url, saved_path?}], error?}`。URL 为 `http://<comfyui>/view?...` 直链——**默认不返回 base64/图片内容**，控制上下文（内联图片模式留作后续可选）。
+返回：`{index, status, params_resolved, outputs: [{kind, local_path, url?}], error?}`（url 仅在 `url:true` 时附带）。**默认只返回本地绝对路径，绝不返回 base64**——本地路径是 Agent 成本最低的引用形式（上下文最短、可被本地工具直接打开）；`/view` URL 仅作显式选项，默认不依赖（ComfyUI 重启/清历史后 URL 即失效，本地文件不会）。
 
 辅助工具（**暂不实现**，触发条件明确后才加）：`cancel_batch`（需要人工中止长批量时）、`server_status`（health 探测，排障时）、`upload_asset`（工作流出现图片输入参数时）、`save_assets`（批量落盘时）。不引入节点/模型查询类工具（用户自己管理工作流与模型）。
 
@@ -391,7 +426,7 @@ Batch: running ─┬→ completed   （全部 succeeded）
 1. instructions 前置 canonical flows（先 list → run → poll get_batch → get_result；批量用 runs 数组一次提交），工具 description 不重复教程。
 2. 两级信息：list_workflows 摘要/详情分离；get_batch 汇总统计 + 分页明细；get_result 单点详情。
 3. 一切错误消息 clip（默认 200 字符）+ `...` 显式截断标记；空值渲染 `<empty>` 不省略字段。
-4. 输出默认 URL/路径引用，绝不 base64；批量结果只回计数，明细按页取。
+4. 输出默认**本地绝对路径**引用（AUTO_SAVE 落盘），绝不 base64；`/view` URL 仅在显式要求时附带；批量结果只回计数，明细按页取。
 5. 校验错误带期望值与修正示例（如 enum 全列），让 Agent 一次自愈。
 
 ## 9. 技术风险与待确认问题
@@ -400,7 +435,7 @@ Batch: running ─┬→ completed   （全部 succeeded）
 
 | # | 问题 | 状态 | 验证/缓解 |
 |---|---|---|---|
-| Q1 | ComfyUI API 细节随版本变动：`POST /prompt` 是否接受客户端指定 `prompt_id`（幂等关键）；`/interrupt` 是否支持按 `prompt_id`（否则只能中断当前执行项）；`node_errors` 结构；`/history` outputs 的 gifs/audio 形状 | **未验证** | Phase 1 冒烟脚本对本机真实 ComfyUI 逐项打点；按实测适配 client 层 |
+| Q1 | ComfyUI API 细节随版本变动：`POST /prompt` 是否接受客户端指定 `prompt_id`（幂等关键，含**同 prompt_id 重复提交的行为**）；`/interrupt` 是否支持按 `prompt_id`（否则只能中断当前执行项）；`node_errors` 结构；`/history` outputs 的 gifs/audio 形状 | **未验证** | Phase 1 冒烟脚本对本机真实 ComfyUI 逐项打点；按实测适配 client 层 |
 | Q2 | ComfyUI history 服务端保留窗口有限 → 重启恢复可能查不到 | 未验证 | 冒烟测 history 上限；恢复逻辑已设计 `/queue`+`/history` 双查 + `lost_after_restart` 终态兜底 |
 | Q3 | better-sqlite3 在本机（win32-x64, Node 22.22）预编译安装 | 未验证 | Phase 0 `npm install` 即验；失败则评估 `node:sqlite`（Node 22 需 `--experimental-sqlite`，不适合客户端拉起，需升 Node ≥24——列为 Plan B） |
 | Q4 | MCP 客户端对工具调用超时各异（部分 60s） | 未验证 | 默认异步返回 batch_id（wait=false），规避长阻塞；wait=true 文档标注仅小批量 |
