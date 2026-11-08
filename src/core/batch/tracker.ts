@@ -1,14 +1,17 @@
 import type { ComfyClient } from "../client/index.js";
 import type { AssetManager } from "../assets/asset-manager.js";
-import type { BatchStore} from "./store.js";
+import type { BatchStore } from "./store.js";
 import { type JobRow, type JobError, type JobOutputAsset } from "./store.js";
 
 /**
  * JobTracker：在途 job 的后台跟踪。
  * - WS 事件（按 prompt_id 多路分解）驱动状态推进
  * - history 轮询兜底（每 3s）：WS 丢失/断线也能定终态（P1 S7 已验证该路径可靠）
- * - 墙钟超时：触发即尽力 interrupt + queue delete（docs/003 F5 修正语义）→ timeout 终态
- * - 成功 → /history 收获输出 → AUTO_SAVE 落盘 → outputs_json（本地绝对路径）
+ * - 墙钟超时：queued→POST /queue delete + executing→POST /interrupt 组合取消
+ *   （docs/003 F5：interrupt 对排队任务是 no-op，两动作对错误态均为无害 no-op → 竞态安全）
+ * - History 终态优先级（Task 004 §二.1）：error/interrupted 判定优先于 outputs 存在性，
+ *   error 绝不因存在部分 outputs 被标成 succeeded
+ * - 成功 → /history 收获输出 → AUTO_SAVE 落盘（false 时存引用，get_result 按需下载）
  */
 
 const HISTORY_POLL_MS = 3_000;
@@ -27,6 +30,23 @@ interface Tracked {
   pollTimer: NodeJS.Timeout | null;
   timeoutTimer: NodeJS.Timeout | null;
   settled: boolean;
+}
+
+/** history.status → 终态判定（优先级：error/interrupted > success/completed > 有输出） */
+export function historyVerdict(entry: {
+  status?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+}): "success" | "error" | "interrupted" | null {
+  const s = entry.status as Record<string, unknown> | undefined;
+  const str = String(s?.["status_str"] ?? "");
+  if (str === "error") return "error";
+  if (str === "interrupted") return "interrupted";
+  if (str === "success" || s?.["completed"] === true) return "success";
+  const hasOutputs = Object.values(entry.outputs ?? {}).some(
+    (o) => o !== null && typeof o === "object" && Object.keys(o as object).length > 0
+  );
+  if (hasOutputs) return "success"; // 无显式状态但有输出（兼容路径；显式 error 已在上方排除）
+  return null;
 }
 
 export class JobTracker {
@@ -96,41 +116,63 @@ export class JobTracker {
         .getHistory(promptId)
         .then((entry) => {
           if (t.settled || !entry) return;
-          const s = entry.status as Record<string, unknown> | undefined;
-          const str = String(s?.["status_str"] ?? "");
-          const hasOutputs = Object.values(entry.outputs ?? {}).some((o) => Object.keys(o).length > 0);
-          if (str === "success" || s?.["completed"] === true || hasOutputs) {
+          const verdict = historyVerdict(entry);
+          if (verdict === "success") {
             void this.settleFromHistory(t, entry);
-          } else if (str === "error" || str === "interrupted") {
-            this.settle(t, str === "error" ? "failed" : "cancelled", {
-              code: str === "error" ? "EXECUTION_ERROR" : "INTERRUPTED",
-              message: `history 轮询判定终态: ${str}`
+          } else if (verdict === "error") {
+            this.settle(t, "failed", {
+              code: "EXECUTION_ERROR",
+              message: "history 轮询判定终态: error"
+            });
+          } else if (verdict === "interrupted") {
+            this.settle(t, "cancelled", {
+              code: "INTERRUPTED",
+              message: "history 轮询判定终态: interrupted"
             });
           }
         })
         .catch(() => undefined); // ComfyUI 暂不可达时下轮再试
     }, HISTORY_POLL_MS);
 
-    // 墙钟超时
+    // 墙钟超时：先组合取消（记录远端结果），取消期间若事件已定终态则以先到者为准
     t.timeoutTimer = setTimeout(() => {
       if (t.settled) return;
-      void this.cancelRemote(promptId).catch(() => undefined);
-      this.settle(t, "timeout", {
-        code: "TIMEOUT",
-        message: `执行超过 ${this.deps.defaultTimeoutMs}ms，已尽力向 ComfyUI 发送 interrupt/queue delete`
-      });
+      void this.handleTimeout(t, promptId);
     }, this.deps.defaultTimeoutMs);
 
     this.tracked.set(job.id, t);
   }
 
-  /** docs/003 F5：排队态 interrupt 是 no-op，须组合 queue delete 才能取消 */
-  private async cancelRemote(promptId: string): Promise<void> {
+  private async handleTimeout(t: Tracked, promptId: string): Promise<void> {
+    const remote = await this.cancelRemote(promptId);
+    if (t.settled) return; // 竞态：取消进行中 job 已由事件定终态（如恰好成功），保持原判定
+    this.settle(t, "timeout", {
+      code: "TIMEOUT",
+      message: `执行超过 ${this.deps.defaultTimeoutMs}ms，已向 ComfyUI 发送组合取消（queue delete + interrupt）`,
+      remote_cancel: remote
+    });
+  }
+
+  /**
+   * 组合取消（docs/003 F5 语义）：queue delete 移除排队项；interrupt 终止执行项。
+   * 任务可能恰在两动作之间由 queued 转 executing，故两者都发——
+   * 各自对"错误状态"是已验证的无害 no-op（interrupt 不伤排队任务，delete 不影响执行中任务）。
+   */
+  private async cancelRemote(promptId: string): Promise<{ queue_delete: string; interrupt: string }> {
+    const out = { queue_delete: "skipped", interrupt: "skipped" };
+    try {
+      await this.deps.client.http.deleteQueue([promptId]);
+      out.queue_delete = "ok";
+    } catch (e) {
+      out.queue_delete = `error: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200);
+    }
     try {
       await this.deps.client.http.interrupt(promptId);
-    } catch {
-      /* 尽力而为 */
+      out.interrupt = "ok";
+    } catch (e) {
+      out.interrupt = `error: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200);
     }
+    return out;
   }
 
   private async settleFromHistory(t: Tracked, entry?: Awaited<ReturnType<ComfyClient["http"]["getHistory"]>>): Promise<void> {
@@ -142,6 +184,17 @@ export class JobTracker {
       this.settle(t, "failed", { code: "NO_HISTORY", message: "execution_success 后无法读取 history" });
       return;
     }
+    // 终态优先级守卫：execution_success 事件到达但 history 实际记录 error/interrupted
+    //（理论上不应发生，防御性保证 error 不被误判为成功）
+    const verdict = historyVerdict(hist);
+    if (verdict === "error") {
+      this.settle(t, "failed", { code: "EXECUTION_ERROR", message: "execution_success 后 history 记录为 error" });
+      return;
+    }
+    if (verdict === "interrupted") {
+      this.settle(t, "cancelled", { code: "INTERRUPTED", message: "execution_success 后 history 记录为 interrupted" });
+      return;
+    }
     let outputs: JobOutputAsset[] = [];
     let saveError: string | null = null;
     if (this.deps.autoSave) {
@@ -151,7 +204,7 @@ export class JobTracker {
         saveError = `输出落盘失败: ${e instanceof Error ? e.message : String(e)}`;
       }
     } else {
-      // 不落盘时记录引用（kind+filename，供 get_result 按需处理）
+      // 不落盘时记录引用（kind+filename，供 get_result 按需下载）
       const { harvestOutputRefs } = await import("../assets/asset-manager.js");
       outputs = harvestOutputRefs(hist).map((r) => ({ ...r, local_path: "", bytes: 0 }));
     }
@@ -176,6 +229,8 @@ export class JobTracker {
       outputs_json: outputs ? JSON.stringify(outputs) : undefined,
       finished_at: new Date().toISOString()
     });
+    // attempt 终态回写（t.job 快照的 attempt_no 即本次跟踪的尝试）
+    this.deps.store.patchAttemptStatus(t.job.id, t.job.attempt_no, status, new Date().toISOString());
     const { status: batchStatus, finished } = this.deps.store.recomputeBatchStatus(t.job.batch_id);
     this.deps.store.updateBatchStatus(t.job.batch_id, batchStatus, finished ? new Date().toISOString() : null);
   }

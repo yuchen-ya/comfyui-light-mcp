@@ -73,6 +73,14 @@
       "step": 16,
       "default": 512,
       "description": "高度（16px 对齐）"
+    },
+    {
+      "name": "sampler",
+      "node": "7",
+      "input": "sampler_name",
+      "type": "string",
+      "default": "euler",
+      "description": "采样器（combo：合法值由 ComfyUI 校验，非法值在提交时被拒并返回 node_errors）"
     }
   ]
 }

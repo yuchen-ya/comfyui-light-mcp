@@ -128,13 +128,20 @@ export class ComfyHttp {
 
   /**
    * POST /interrupt —— 中断执行。
-   * 是否支持按 prompt_id 精确中断以真实验证为准（docs/003 Q3）；
+   * docs/003 F5（已验证）：interrupt{prompt_id} 对排队任务是 no-op、不影响其他任务；
+   * 取消排队任务必须走 POST /queue {delete:[id]}（deleteQueue）。
    * 不传 promptId = 中断当前执行项（ComfyUI 传统语义）。
    */
   async interrupt(promptId?: string): Promise<void> {
     const body = promptId ? JSON.stringify({ prompt_id: promptId }) : "{}";
     const res = await this.request("POST", "/interrupt", { body });
     await this.assertOk(res, "/interrupt");
+  }
+
+  /** POST /queue {delete:[...]} —— 从 ComfyUI 队列移除排队项（对不在队的 id 是无害 no-op） */
+  async deleteQueue(promptIds: string[]): Promise<void> {
+    const res = await this.request("POST", "/queue", { body: JSON.stringify({ delete: promptIds }) });
+    await this.assertOk(res, "/queue delete");
   }
 
   /** GET /view —— 下载输出文件，返回原始 Response（流式，由调用方落盘） */

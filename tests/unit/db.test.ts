@@ -2,16 +2,16 @@ import { describe, expect, it } from "vitest";
 import { openDb } from "../../src/core/storage/db.js";
 
 describe("storage db", () => {
-  it("打开即迁移到 v1（user_version=1），幂等", () => {
+  it("打开即迁移到 v2（user_version=2），幂等", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(1);
+    expect(db.pragma("user_version", { simple: true })).toBe(2);
     db.close();
     const db2 = openDb(":memory:");
-    expect(db2.pragma("user_version", { simple: true })).toBe(1);
+    expect(db2.pragma("user_version", { simple: true })).toBe(2);
     db2.close();
   });
 
-  it("四张表与恢复用部分索引存在", () => {
+  it("四张表与恢复/调度用部分索引存在", () => {
     const db = openDb(":memory:");
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table'")
@@ -23,6 +23,8 @@ describe("storage db", () => {
       .prepare("SELECT name FROM sqlite_master WHERE type='index'")
       .all() as Array<{ name: string }>;
     expect(indexes.map((r) => r.name)).toContain("idx_jobs_recover");
+    expect(indexes.map((r) => r.name)).toContain("idx_jobs_pending"); // v2 调度热路径
+    expect(indexes.map((r) => r.name)).toContain("idx_jobs_retryable"); // v2 重试扫描
     db.close();
   });
 

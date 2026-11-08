@@ -66,7 +66,7 @@ describe.skipIf(!reachable)("真实 ComfyUI 文生图端到端", () => {
       try {
         // list
         const detail = engine.listWorkflows("qwen-image-demo") as { params: Array<{ name: string }> };
-        expect(detail.params?.length).toBe(7);
+        expect(detail.params?.length).toBe(8); // Task 004 增 sampler（combo 由 ComfyUI 校验）
 
         // run（固定 seed 保证可断言）
         const handle = await engine.runSingle({
@@ -76,12 +76,12 @@ describe.skipIf(!reachable)("真实 ComfyUI 文生图端到端", () => {
         });
         expect(handle.batch_id).toBeTruthy();
 
-        // 轮询至终态
+        // 轮询至终态（Task 004 起统一走调度管线，含 pending 瞬态）
         const deadline = Date.now() + 240_000;
         let view;
         for (;;) {
-          view = engine.getResult(handle.batch_id, 0);
-          if (!["queued", "executing", "submitting"].includes(view.status)) break;
+          view = await engine.getResult(handle.batch_id, 0);
+          if (!["pending", "submitting", "queued", "executing"].includes(view.status)) break;
           if (Date.now() > deadline) throw new Error(`轮询超时，最后状态: ${view.status}`);
           await new Promise((r) => setTimeout(r, 1500));
         }
@@ -110,7 +110,7 @@ describe.skipIf(!reachable)("真实 ComfyUI 文生图端到端", () => {
 
         console.error(`[e2e] ComfyUI ${comfyuiVersion} → ${img.local_path}`);
       } finally {
-        engine.tracker.disposeAll();
+        engine.stop();
         client.stop();
         db.close();
       }

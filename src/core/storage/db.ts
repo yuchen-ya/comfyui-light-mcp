@@ -63,6 +63,15 @@ CREATE INDEX idx_attempts_prompt ON job_attempts(prompt_id);
 CREATE INDEX idx_jobs_recover ON jobs(status)
   WHERE status IN ('submitting','submission_unknown','queued','executing');
 `
+  },
+  {
+    // v2（Task 004）：Scheduler 热路径部分索引——待提交扫描与重试扫描。
+    // 幂等键约束复用 v1 的 batches.idempotency_key UNIQUE，无新列。
+    version: 2,
+    sql: `
+CREATE INDEX idx_jobs_pending ON jobs(batch_id, idx) WHERE status = 'pending';
+CREATE INDEX idx_jobs_retryable ON jobs(batch_id, idx) WHERE status IN ('failed','timeout');
+`
   }
 ];
 

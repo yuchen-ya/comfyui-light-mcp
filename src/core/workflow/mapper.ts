@@ -112,6 +112,11 @@ function effectiveSeed(p: ManifestParam, provided: number | undefined): number {
 
 /**
  * 定点覆写：只动 manifest 声明的 (node, input)。
+ * default 语义（Task 004 §二.4 修订）：
+ *   - 显式提供 → 使用提供值
+ *   - 未提供但 manifest 有 default → 使用 default 值
+ *   - 两者皆无 → 保留工作流模板原值
+ * resolved 记录全部 manifest 参数的【实际生效值】（含模板原值），保证可复现。
  * 契约：调用前 params 必须已过 validateParams（registry 已保证 node/input 存在）。
  */
 export function applyParams(
@@ -124,14 +129,21 @@ export function applyParams(
   for (const p of m.params) {
     const provided = params[p.name];
     if (p.special === "seed") {
+      // seed 特例：-1（或缺省 default=-1）→ 每 job 随机；其余值（含 default）原样
       const seed = effectiveSeed(p, typeof provided === "number" ? provided : undefined);
       graph[p.node]!.inputs[p.input] = seed;
       resolved[p.name] = seed;
       continue;
     }
-    if (provided === undefined) continue; // 未提供 → 保留模板值（default 仅作 schema 展示）
-    graph[p.node]!.inputs[p.input] = provided;
-    resolved[p.name] = provided;
+    let value = provided;
+    if (value === undefined && p.default !== undefined) value = p.default;
+    if (value === undefined) {
+      // 无 default → 保留模板原值；resolved 记录模板实际值（完整可复现）
+      resolved[p.name] = graphTemplate[p.node]!.inputs[p.input];
+      continue;
+    }
+    graph[p.node]!.inputs[p.input] = value;
+    resolved[p.name] = value;
   }
   return { graph, resolved };
 }

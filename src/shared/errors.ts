@@ -11,6 +11,7 @@ export type ErrorCode =
   | "COMFY_WS_ERROR"
   | "TIMEOUT"
   | "NOT_FOUND"
+  | "INVALID_RUNS"
   | "INTERNAL";
 
 export class ComfyLightError extends Error {

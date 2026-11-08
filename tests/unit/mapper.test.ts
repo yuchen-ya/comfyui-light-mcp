@@ -85,10 +85,48 @@ describe("参数映射（applyParams）", () => {
     expect(template).toEqual(templateSnapshot); // 原模板不被污染
   });
 
-  it("未提供的参数保留模板值", () => {
+  it("未提供但有 default → 使用 default；无 default → 保留模板原值（Task 004 语义）", () => {
     const r = applyParams(template, manifest, { prompt: "x" });
-    expect(r.graph["7"]!.inputs["cfg"]).toBe(7); // 模板原值
-    expect(r.resolved["cfg"]).toBeUndefined();
+    expect(r.graph["7"]!.inputs["cfg"]).toBe(2.5); // manifest default 生效（不再是模板 7）
+    expect(r.resolved["cfg"]).toBe(2.5);
+    expect(r.graph["7"]!.inputs["steps"]).toBe(20); // default=20（与模板一致）
+    expect(r.resolved["steps"]).toBe(20);
+  });
+
+  it("无 default 的参数未提供 → 保留模板原值且 resolved 记录模板值（可复现）", () => {
+    const m2 = parseManifest(
+      "t2.manifest.json",
+      JSON.stringify({
+        name: "t2",
+        description: "d",
+        version: 1,
+        workflowFile: "t2.json",
+        params: [
+          { name: "prompt", node: "4", input: "text", type: "string", required: true },
+          { name: "denoise", node: "7", input: "denoise", type: "number" } // 无 default
+        ]
+      })
+    );
+    const r = applyParams(template, m2, { prompt: "x" });
+    expect(r.graph["7"]!.inputs["denoise"]).toBeUndefined(); // 模板无该键 → 未写入
+    expect(r.resolved["denoise"]).toBeUndefined();
+    // 模板有值的输入
+    const m3 = parseManifest(
+      "t3.manifest.json",
+      JSON.stringify({
+        name: "t3",
+        description: "d",
+        version: 1,
+        workflowFile: "t3.json",
+        params: [
+          { name: "prompt", node: "4", input: "text", type: "string", required: true },
+          { name: "steps", node: "7", input: "steps", type: "integer" } // 无 default，模板=20
+        ]
+      })
+    );
+    const r3 = applyParams(template, m3, { prompt: "x" });
+    expect(r3.graph["7"]!.inputs["steps"]).toBe(20); // 模板原值保留
+    expect(r3.resolved["steps"]).toBe(20); // resolved 记录实际生效值
   });
 
   it("seed：-1 → 随机并记录实际值；固定值原样", () => {

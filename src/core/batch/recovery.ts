@@ -1,13 +1,13 @@
 import type { ComfyClient } from "../client/index.js";
 import { queueEntryPromptId } from "../client/types.js";
-import type { AssetManager } from "../assets/asset-manager.js";
-import type { BatchStore} from "./store.js";
+import { harvestOutputRefs, type AssetManager } from "../assets/asset-manager.js";
+import type { BatchStore } from "./store.js";
 import { type JobRow } from "./store.js";
-import type { JobTracker } from "./tracker.js";
+import { historyVerdict, type JobTracker } from "./tracker.js";
 
 /**
- * 启动恢复（docs/002 §6.2，Task 003 A1 语义）：
- * - history 有记录 → 定终态（成功则收获输出+落盘）
+ * 启动恢复（docs/002 §6.2，Task 003 A1 语义 + Task 004 §二.1 终态优先级）：
+ * - history 有记录 → 定终态（error/interrupted 优先判定；成功才收获输出+落盘）
  * - /queue 仍在 → 交还 tracker 继续跟踪（不重复提交）
  * - 两处皆无 → **保持 submission_unknown**（不伪装 failed、不自动重提、get_batch 可区分）
  */
@@ -49,31 +49,33 @@ async function recoverOne(deps: RecoveryDeps, job: JobRow, report: RecoveryRepor
   }
   const hist = await deps.client.http.getHistory(job.prompt_id).catch(() => null);
   if (hist) {
-    const s = hist.status as Record<string, unknown> | undefined;
-    const str = String(s?.["status_str"] ?? "");
-    const hasOutputs = Object.values(hist.outputs ?? {}).some((o) => Object.keys(o).length > 0);
-    if (str === "success" || s?.["completed"] === true || hasOutputs) {
-      let outputs;
-      if (deps.autoSave) {
-        outputs = await deps.assets.saveOutputs(job.batch_id, job.idx, hist).catch((e) => {
-          throw new Error(`恢复落盘失败: ${e instanceof Error ? e.message : String(e)}`);
-        });
-      }
-      deps.store.patchJob(job.id, {
-        status: "succeeded",
-        outputs_json: JSON.stringify(outputs ?? []),
-        finished_at: new Date().toISOString()
-      });
-    } else if (str === "error") {
+    // 终态优先级（Task 004 §二.1）：error/interrupted 先判，error 不得因部分 outputs 判 succeeded
+    const verdict = historyVerdict(hist);
+    if (verdict === "error") {
       deps.store.patchJob(job.id, {
         status: "failed",
         error_json: JSON.stringify({ code: "EXECUTION_ERROR", message: "崩溃期间执行失败（恢复时经 history 判定）" }),
         finished_at: new Date().toISOString()
       });
-    } else if (str === "interrupted") {
+    } else if (verdict === "interrupted") {
       deps.store.patchJob(job.id, {
         status: "failed",
         error_json: JSON.stringify({ code: "INTERRUPTED", message: "崩溃期间被中断（恢复时经 history 判定）" }),
+        finished_at: new Date().toISOString()
+      });
+    } else if (verdict === "success") {
+      let outputs;
+      if (deps.autoSave) {
+        outputs = await deps.assets.saveOutputs(job.batch_id, job.idx, hist).catch((e) => {
+          throw new Error(`恢复落盘失败: ${e instanceof Error ? e.message : String(e)}`);
+        });
+      } else {
+        // 与 tracker 一致：不落盘时记录引用（get_result 按需下载）
+        outputs = harvestOutputRefs(hist).map((r) => ({ ...r, local_path: "", bytes: 0 }));
+      }
+      deps.store.patchJob(job.id, {
+        status: "succeeded",
+        outputs_json: JSON.stringify(outputs ?? []),
         finished_at: new Date().toISOString()
       });
     } else {

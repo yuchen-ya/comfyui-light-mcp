@@ -44,6 +44,9 @@ async function main(): Promise<void> {
     }
   }
 
+  // 调度器常驻：恢复出的 queued/executing 已交还 tracker，pending（含重启前未跑完的批量）由此续跑
+  engine.start();
+
   const server = createMcpServer(engine);
   await server.connect(new StdioServerTransport());
   console.error(`[mcp] stdio server ready (workflows=${report.loaded.length}, comfyui=${connected ? "connected" : "unreachable"})`);

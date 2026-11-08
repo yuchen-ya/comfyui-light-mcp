@@ -103,20 +103,48 @@ describe("A1 · 提交前持久化", () => {
     expect(err.code).toBe("SUBMISSION_UNKNOWN");
   });
 
-  it("ComfyUI 拒绝（400）→ failed 终态 + 结构化错误", async () => {
+  it("ComfyUI 拒绝（400）→ failed 终态 + 归一化结构化错误", async () => {
     const { store, fake, runner } = setup();
     fake.submitImpl = async () => ({
       ok: false,
       httpStatus: 400,
-      errorBody: { type: "missing_node_type" },
-      nodeErrors: null
+      errorBody: { type: "prompt_outputs_failed_validation" },
+      nodeErrors: {
+        "7": {
+          errors: [
+            {
+              type: "value_not_in_list",
+              message: "Value not in list",
+              details: "sampler_name: 'euler_BAD' not in (list of length 45)",
+              extra_info: { input_name: "sampler_name", input_config: null, received_value: "euler_BAD" }
+            }
+          ],
+          dependent_outputs: ["9"],
+          class_type: "KSampler"
+        }
+      }
     });
     const handle = await runner.submitSingle(makeWf(), { prompt: "hi" });
     expect(handle.status).toBe("failed");
     const job = store.getJob(handle.batchId, 0)!;
-    const err = JSON.parse(job.error_json!) as { code: string; node_errors: unknown };
+    const err = JSON.parse(job.error_json!) as {
+      code: string;
+      message: string;
+      node_errors: Array<{ node: string; input: string; type: string; received_value: string }>;
+    };
     expect(err.code).toBe("COMFY_REJECTED");
-    expect(err.node_errors).toEqual({ type: "missing_node_type" });
+    expect(err.message).toContain("prompt_outputs_failed_validation");
+    // 归一化（docs/005 §七真实样本形状）
+    expect(err.node_errors).toEqual([
+      {
+        node: "7",
+        class_type: "KSampler",
+        input: "sampler_name",
+        type: "value_not_in_list",
+        message: "sampler_name: 'euler_BAD' not in (list of length 45)",
+        received_value: "euler_BAD"
+      }
+    ]);
   });
 });
 

@@ -57,6 +57,18 @@ export class AssetManager {
   /** 下载 history 条目的全部输出到本地，返回带绝对路径的资产清单 */
   async saveOutputs(batchId: string, idx: number, entry: HistoryEntry): Promise<JobOutputAsset[]> {
     const refs = harvestOutputRefs(entry);
+    return this.downloadRefs(batchId, idx, refs);
+  }
+
+  /**
+   * 按引用清单下载（AUTO_SAVE_OUTPUTS=false 时 get_result 按需下载用）。
+   * 落盘布局与即时落盘完全一致：OUTPUT_DIR/<batch_id>/<idx>/<原始文件名>（重名加序号）。
+   */
+  async downloadRefs(
+    batchId: string,
+    idx: number,
+    refs: Array<{ kind: JobOutputAsset["kind"]; filename: string; subfolder: string; type: string }>
+  ): Promise<JobOutputAsset[]> {
     const saved: JobOutputAsset[] = [];
     const usedNames = new Set<string>();
     for (const ref of refs) {
