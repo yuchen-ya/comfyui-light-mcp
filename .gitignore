@@ -1,0 +1,26 @@
+# 隐私与密钥（严禁提交）
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+secrets/
+credentials*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Node
+node_modules/
+
+# 工具与系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
