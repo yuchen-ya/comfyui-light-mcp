@@ -12,6 +12,23 @@ export interface ComfyRawEvent {
   [k: string]: unknown;
 }
 
+/**
+ * 提取事件的 prompt_id。
+ * 实测两种形态（docs/003）：
+ * - ComfyUI 0.41：{"type":"executing","data":{"node":"1","prompt_id":"..."}}  → data 内
+ * - 旧版/部分广播事件：顶层 prompt_id
+ */
+export function promptIdOf(raw: ComfyRawEvent): string | null {
+  const top = raw["prompt_id"];
+  if (typeof top === "string" && top !== "") return top;
+  const d = raw.data;
+  if (d !== null && typeof d === "object") {
+    const p = d["prompt_id"];
+    if (typeof p === "string" && p !== "") return p;
+  }
+  return null;
+}
+
 /** 面向 job 层的规范化事件 */
 export type JobEvent =
   | { type: "started" }
@@ -31,7 +48,7 @@ export function translateJobEvent(raw: ComfyRawEvent): JobEvent | null {
     case "execution_start":
       return { type: "started" };
     case "executing": {
-      // 字段名兼容 node / node_id（以真实验证为准）
+      // 字段名兼容 node / node_id（0.41 实测为 data.node；null 为完毕哨兵）
       const node = data["node"] ?? data["node_id"] ?? raw["node"] ?? raw["node_id"];
       return { type: "executing", nodeId: typeof node === "string" ? node : null };
     }
@@ -39,6 +56,19 @@ export function translateJobEvent(raw: ComfyRawEvent): JobEvent | null {
       const value = typeof data["value"] === "number" ? data["value"] : 0;
       const max = typeof data["max"] === "number" ? data["max"] : 0;
       return { type: "progress", value, max };
+    }
+    case "progress_state": {
+      // 0.41 实测：{prompt_id, nodes: {id: {value, max, state}}}，取首个节点的值
+      const nodes = data["nodes"];
+      if (nodes !== null && typeof nodes === "object") {
+        const first = Object.values(nodes as Record<string, Record<string, unknown>>)[0];
+        if (first) {
+          const value = typeof first["value"] === "number" ? first["value"] : 0;
+          const max = typeof first["max"] === "number" ? first["max"] : 0;
+          return { type: "progress", value, max };
+        }
+      }
+      return null;
     }
     case "executed": {
       const nodeId = typeof data["node"] === "string" ? data["node"] : "";
@@ -57,7 +87,7 @@ export function translateJobEvent(raw: ComfyRawEvent): JobEvent | null {
     case "execution_interrupted":
       return { type: "interrupted" };
     default:
-      return null; // status / execution_cached / 未知类型
+      return null; // status / execution_cached / crystools.monitor 等自定义广播
   }
 }
 
@@ -73,8 +103,8 @@ export class ComfyEventBus {
   publish(raw: ComfyRawEvent): void {
     const listeners = this.anyListeners;
     for (const l of listeners) l(raw);
-    const promptId = raw["prompt_id"];
-    if (typeof promptId !== "string" || promptId === "") return;
+    const promptId = promptIdOf(raw);
+    if (promptId === null) return;
     const set = this.byPrompt.get(promptId);
     if (!set) return;
     const job = translateJobEvent(raw);

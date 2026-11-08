@@ -435,8 +435,8 @@ Batch: running ─┬→ completed   （全部 succeeded）
 
 | # | 问题 | 状态 | 验证/缓解 |
 |---|---|---|---|
-| Q1 | ComfyUI API 细节随版本变动：`POST /prompt` 是否接受客户端指定 `prompt_id`（幂等关键，含**同 prompt_id 重复提交的行为**）；`/interrupt` 是否支持按 `prompt_id`（否则只能中断当前执行项）；`node_errors` 结构；`/history` outputs 的 gifs/audio 形状 | **未验证** | Phase 1 冒烟脚本对本机真实 ComfyUI 逐项打点；按实测适配 client 层 |
-| Q2 | ComfyUI history 服务端保留窗口有限 → 重启恢复可能查不到 | 未验证 | 冒烟测 history 上限；恢复逻辑已设计 `/queue`+`/history` 双查 + `lost_after_restart` 终态兜底 |
+| Q1 | ComfyUI API 细节随版本变动：`POST /prompt` 是否接受客户端指定 `prompt_id`（幂等关键，含**同 prompt_id 重复提交的行为**）；`/interrupt` 是否支持按 `prompt_id`（否则只能中断当前执行项）；`node_errors` 结构；`/history` outputs 的 gifs/audio 形状 | **已验证（0.41.0 实测，docs/003）**：指定 id 接受且回显；**同 id 重提会重复执行（无去重）→ 禁止盲目重提**；interrupt 按 id 对排队/执行两态均有效；gifs/audio 本环境未出现 |
+| Q2 | ComfyUI history 服务端保留窗口有限 → 重启恢复可能查不到 | 部分验证：history 可完整判定成功/失败/中断终态（docs/003 F6）；保留窗口上限仍未测 | P3 恢复逻辑按 `/queue`+`/history` 双查 + 不重提兜底实现 |
 | Q3 | better-sqlite3 在本机（win32-x64, Node 22.22）预编译安装 | 未验证 | Phase 0 `npm install` 即验；失败则评估 `node:sqlite`（Node 22 需 `--experimental-sqlite`，不适合客户端拉起，需升 Node ≥24——列为 Plan B） |
 | Q4 | MCP 客户端对工具调用超时各异（部分 60s） | 未验证 | 默认异步返回 batch_id（wait=false），规避长阻塞；wait=true 文档标注仅小批量 |
 | Q5 | WS 单连接承载所有 job 事件，高并发批量下事件风暴 | 设计内 | 事件按 prompt_id 分发 + 落库后再响应；progress 事件默认不落库只更新内存 |

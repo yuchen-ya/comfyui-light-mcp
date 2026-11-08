@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { ComfyEventBus, translateJobEvent } from "../../src/core/client/event-bus.js";
+import { ComfyEventBus, promptIdOf, translateJobEvent } from "../../src/core/client/event-bus.js";
+
+describe("promptIdOf（0.41 实测形态兼容）", () => {
+  it("0.41: prompt_id 在 data 内", () => {
+    expect(promptIdOf({ type: "executing", data: { node: "1", prompt_id: "p1" } })).toBe("p1");
+  });
+
+  it("旧版: prompt_id 在顶层", () => {
+    expect(promptIdOf({ type: "execution_start", prompt_id: "p2", data: {} })).toBe("p2");
+  });
+
+  it("无 prompt_id 返回 null（status 等广播）", () => {
+    expect(promptIdOf({ type: "status", data: { status: {} } })).toBeNull();
+    expect(promptIdOf({ type: "executing", data: { node: "1", prompt_id: "" } })).toBeNull();
+  });
+});
 
 describe("translateJobEvent", () => {
   it("execution_start → started", () => {
@@ -55,9 +70,22 @@ describe("translateJobEvent", () => {
     expect(translateJobEvent({ type: "execution_interrupted", prompt_id: "p" })).toEqual({ type: "interrupted" });
   });
 
-  it("status / 未知类型返回 null", () => {
+  it("progress_state（0.41 事件名）取首个节点的 value/max", () => {
+    const e = translateJobEvent({
+      type: "progress_state",
+      data: { prompt_id: "p", nodes: { "7": { value: 3, max: 10, state: "running" }, "8": { value: 0, max: 5 } } }
+    });
+    expect(e).toEqual({ type: "progress", value: 3, max: 10 });
+  });
+
+  it("progress_state 无节点数据返回 null", () => {
+    expect(translateJobEvent({ type: "progress_state", data: { prompt_id: "p", nodes: {} } })).toBeNull();
+  });
+
+  it("status / 未知类型 / 自定义节点广播返回 null", () => {
     expect(translateJobEvent({ type: "status", data: { status: {} } })).toBeNull();
     expect(translateJobEvent({ type: "execution_cached", data: { nodes: ["1"] } })).toBeNull();
+    expect(translateJobEvent({ type: "crystools.monitor", data: { ram: 1 } })).toBeNull();
     expect(translateJobEvent({ type: "future_event" })).toBeNull();
   });
 });
@@ -76,6 +104,20 @@ describe("ComfyEventBus", () => {
 
     expect(gotA).toEqual(["started", "success"]);
     expect(gotB).toEqual(["started"]);
+  });
+
+  it("0.41 形态（prompt_id 在 data 内）同样正确路由（真实验证发现的回归）", () => {
+    const bus = new ComfyEventBus();
+    const got: string[] = [];
+    bus.subscribePrompt("real-pid", (e) => got.push(e.type));
+
+    bus.publish({ type: "execution_start", data: { prompt_id: "real-pid", timestamp: 1 } });
+    bus.publish({ type: "executing", data: { node: "1", display_node: "1", prompt_id: "real-pid" } });
+    bus.publish({ type: "executing", data: { node: null, prompt_id: "real-pid" } });
+    bus.publish({ type: "execution_success", data: { prompt_id: "real-pid" } });
+    bus.publish({ type: "executing", data: { node: "9", prompt_id: "other-job" } });
+
+    expect(got).toEqual(["started", "executing", "executing", "success"]);
   });
 
   it("无 prompt_id 的事件不投递给 job 订阅者，仅 any 订阅者可见", () => {
