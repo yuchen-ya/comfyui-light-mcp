@@ -31,5 +31,9 @@ output/
 *.db
 *.db-*
 
+# 用户真实工作流不入库（示例除外）
+workflows/*
+!workflows/examples/
+
 # 审计用临时克隆与冒烟结果，不入库
 .analysis/

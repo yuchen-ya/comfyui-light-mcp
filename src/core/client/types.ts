@@ -75,10 +75,19 @@ export interface OutputRef {
 }
 
 /**
- * /queue 条目为元组：[序号, 批号, prompt_id, prompt图, extra_data, outputs_to_execute]
- * 版本间存在差异，保持宽松。
+ * /queue 条目为元组，实测漂移（docs/003 F10）：
+ * - 旧版: [序号, 批号, prompt_id, prompt图, extra_data, outputs_to_execute] → prompt_id 在 [2]
+ * - 0.41: [序号, prompt_id, prompt图, ...]                                  → prompt_id 在 [1]
  */
-export type QueueItem = [number, number, string, unknown, unknown, unknown?];
+export type QueueItem = unknown[];
+
+/** 从队列条目中稳健提取 prompt_id（兼容新旧元组布局） */
+export function queueEntryPromptId(item: QueueItem): string | null {
+  for (const v of item.slice(0, 3)) {
+    if (typeof v === "string" && /^[0-9a-f-]{8,}$/i.test(v)) return v;
+  }
+  return null;
+}
 
 export interface QueueInfo {
   queue_running: QueueItem[];

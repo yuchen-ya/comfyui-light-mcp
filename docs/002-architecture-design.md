@@ -109,6 +109,7 @@ comfyui-light-mcp/
 | `AUTO_SAVE_OUTPUTS` | `true` | job 成功即落盘 |
 | `MAX_IN_FLIGHT` | `1` | 在途窗口（submitting/submission_unknown/queued/executing） |
 | `MAX_QUEUED_JOBS` | `1` | ComfyUI 队列占用窗口（仅 queued），须 ≤ MAX_IN_FLIGHT |
+| `JOB_TIMEOUT_MS` | `600000` | 单 job 墙钟超时，触发即尽力 interrupt（P2 已实现） |
 
 **决策：v1 传输只做 stdio**。Windows 本地 + MCP 客户端拉起的场景下 stdio 是唯一必要形态；HTTP 传输留待确有需求再加（metabrain 的会话管理骨架已备份在审计记录中，加回成本低）。
 
@@ -309,7 +310,8 @@ Job:   pending ─→ submitting ─→ queued ─→ executing ─┬→ succee
           │            │            │        │        └→ cancelled
           │            ↓            ↓        ↓
           │      submission_unknown ─┬→ (恢复时在 /queue 或 /history 中找到) → queued/executing/终态，继续跟踪
-          │                          └→ (两处均无) → failed(error=submission_unknown)，【禁止自动重提】
+          │                          └→ (两处均无) → **保持 submission_unknown**（Task 003 A1 确认：
+          │                             不伪装 failed、不自动重提；get_batch 原样区分；batch 视为未决=running）
           └→ invalid（参数校验失败，创建时即定，终态，不占提交窗口）
         （提交抛错/网络失败）（/queue 中）（WS executing）（终态；WS+history 双确认）
 
@@ -324,7 +326,7 @@ Batch: running ─┬→ completed   （全部 succeeded）
 - **部分容错（已确认决策）**：参数校验失败的 run **不阻塞整批**——合法 run 正常创建提交，非法 run 以 `invalid` 终态独立落库（error 逐字段记录原因），batch 汇总中计入失败侧。`run_workflow` 响应带 `invalid_runs` 清单，Agent 可一次看到全部错误并自愈重提。
 - **失败隔离**：单 job 失败不影响 batch 内其他 job（默认 `continue_on_error=true`，batch 级可配 false：失败即取消剩余 pending）。
 - **重试**：仅对 `failed/timeout` 且 `attempt_no < maxRetries`（默认 0，即不自动重试；显式配置才启用）。每次尝试一行 `job_attempts`（含独立 prompt_id 与终态），历史只增不改。
-- **submission_unknown（已确认决策）**：`submitting` 态遇网络失败/进程崩溃 → 入 `submission_unknown`。恢复判定：能查到（`/queue` 或 `/history/{prompt_id}`）→ 继续跟踪；查不到 → 终态 `failed(error=submission_unknown)`，**禁止自动重提**（无法排除 ComfyUI 已收到且将执行的可能，宁可少不可重）。若真实环境验证客户端可指定 prompt_id（见 003 验证），则提交前先固化 prompt_id，`submission_unknown` 的可查性大幅提高，但"查不到即不重提"原则不变。
+- **submission_unknown（Task 003 A1 最终语义，已实测落地）**：`submitting` 态遇网络失败/进程崩溃 → 入 `submission_unknown`。**prompt_id 在提交动作之前已持久化**（runner 固定顺序：生 id → 落库 → POST），因此恢复时总是可查证。恢复判定：能查到（`/queue` 或 `/history/{prompt_id}`）→ 继续跟踪或定终态；**两处皆无 → 保持 submission_unknown 状态原样**——不伪装成 failed、不自动重提（0.41 实测同 prompt_id 重提会重复执行，docs/003 F2）、get_batch 必须能把它与 failed 区分开、batch 状态视为未决（保持 running）。背景依据：history 以 prompt_id 为键，重复执行会覆盖同键，"查不到"无法证明"没收到"。
 - **timeout**：batch 级 `timeoutMs` 可选；触发时先 `interrupt`（尽力）再置 timeout 态，不静默等 10 分钟（metabrain 缺陷：超时后远端继续跑，审计 §1.3）。
 - **幂等性**：
   - batch 级：`idempotency_key` 唯一约束，重复 create 返回既有 batch（24h TTL 内）。
@@ -452,9 +454,9 @@ Batch: running ─┬→ completed   （全部 succeeded）
 
 | 阶段 | 内容 | 验收 | 预估 |
 |---|---|---|---|
-| **P0 脚手架** | 目录骨架、tsconfig/eslint/vitest、LICENSE(MIT)、better-sqlite3 安装验证（Q3）、config 模块 | build+单测绿；依赖装得上 | 0.5d |
-| **P1 Client+总线** | comfy-http/comfy-ws/event-bus、重连、二进制帧跳过；`smoke-real-comfyui.ts` 验证 Q1/Q2 全部假设 | 冒烟脚本对本机 ComfyUI 提交→等完→收 outputs 全通 | 1–2d |
-| **P2 工作流+MVP** | registry/manifest/mapper + `list_workflows`/`run_workflow`(runs 长度 1)/`get_result`（不落盘）；examples 工作流对 | Agent 经 3 工具端到端出 1 张图 | 2–3d |
+| **P0 脚手架** | 目录骨架、tsconfig/eslint/vitest、LICENSE(MIT)、better-sqlite3 安装验证（Q3）、config 模块 | build+单测绿；依赖装得上 | 0.5d | ✅ |
+| **P1 Client+总线** | comfy-http/comfy-ws/event-bus、重连、二进制帧跳过；`smoke-real-comfyui.ts` 验证 Q1/Q2 全部假设 | 冒烟脚本对本机 ComfyUI 提交→等完→收 outputs 全通 | 1–2d | ✅（11/11，docs/003） |
+| **P2 工作流+MVP** | registry/manifest/mapper + `list_workflows`/`run_workflow`(runs 长度 1)/`get_result`（不落盘）；examples 工作流对 | Agent 经 3 工具端到端出 1 张图 | 2–3d | ✅（115 测试 + 真实 e2e + Inspector，docs/004） |
 | **P3 Batch/Job** | SQLite、scheduler(默认串行)、get_batch、失败隔离、重试、幂等键 | 10 runs 批量（混入 2 个参数错误 run）失败隔离正确；重启不丢状态 | 2–3d |
 | **P4 恢复+硬化** | recovery、timeout→interrupt、path-jail、save 落盘、错误分类打磨、并发>1 配置 | kill 进程重启后恢复在途 batch；路径越狱单测全过 | 1–2d |
 | **P5 发布准备** | README(中英)、npx 入口、使用文档（manifest 编写指南） | 新机器按文档 10 分钟跑通 | 0.5–1d |

@@ -1,0 +1,11 @@
+{
+  "1": { "class_type": "UNETLoader", "inputs": { "unet_name": "qwen_image_2.1_int8_convrot.safetensors", "weight_dtype": "default" } },
+  "2": { "class_type": "CLIPLoader", "inputs": { "clip_name": "qwen3vl_8b_w4a8.safetensors", "type": "qwen_image" } },
+  "3": { "class_type": "VAELoader", "inputs": { "vae_name": "qwen_image_2.1_vae_bf16.safetensors" } },
+  "4": { "class_type": "CLIPTextEncode", "inputs": { "text": "a tiny red cube on white background, minimal", "clip": ["2", 0] } },
+  "5": { "class_type": "CLIPTextEncode", "inputs": { "text": "blurry, low quality", "clip": ["2", 0] } },
+  "6": { "class_type": "EmptySD3LatentImage", "inputs": { "width": 512, "height": 512, "batch_size": 1 } },
+  "7": { "class_type": "KSampler", "inputs": { "model": ["1", 0], "positive": ["4", 0], "negative": ["5", 0], "latent_image": ["6", 0], "seed": 42, "steps": 20, "cfg": 2.5, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0 } },
+  "8": { "class_type": "VAEDecode", "inputs": { "samples": ["7", 0], "vae": ["3", 0] } },
+  "9": { "class_type": "SaveImage", "inputs": { "filename_prefix": "qwen-image-demo", "images": ["8", 0] } }
+}

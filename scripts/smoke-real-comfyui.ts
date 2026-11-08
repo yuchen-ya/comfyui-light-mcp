@@ -25,6 +25,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createComfyClient, type ComfyClient } from "../src/core/client/index.js";
 import { promptIdOf } from "../src/core/client/event-bus.js";
+import { queueEntryPromptId } from "../src/core/client/types.js";
 import type { HistoryEntry, ObjectInfoNode, WorkflowGraph } from "../src/core/client/types.js";
 
 const COMFYUI_URL = process.env["COMFYUI_URL"] ?? "http://127.0.0.1:8188";
@@ -217,11 +218,17 @@ async function main(): Promise<void> {
       "S3 WS 终态事件"
     );
     s3History = await client.http.getHistory(s3PromptId);
+    const terminalEvent = eventFor(s3PromptId).find((e) =>
+      ["execution_success", "execution_error", "execution_interrupted"].includes(String(e["type"]))
+    );
+    const statusStr = String((s3History?.status as Record<string, unknown>)?.["status_str"] ?? "<无>");
     const outCount = Object.values(s3History?.outputs ?? {}).flatMap((o) => o.images ?? []).length;
+    const ok =
+      terminalEvent?.["type"] === "execution_success" && statusStr === "success" && outCount >= 1;
     return {
-      status: s3History ? "pass" : "fail",
-      detail: `promptId=${s3PromptId}; history=${s3History ? "有记录" : "无记录"}; 图片输出=${outCount}`,
-      evidence: { promptId: s3PromptId, statusStr: (s3History?.status as Record<string, unknown>)?.["status_str"] ?? null, outCount }
+      status: ok ? "pass" : "fail",
+      detail: `终态事件=${terminalEvent?.["type"]}; history status_str=${statusStr}; 图片输出=${outCount}${ok ? "" : "（三者须同时满足：execution_success + success + ≥1 输出）"}`,
+      evidence: { promptId: s3PromptId, terminalEvent: terminalEvent?.["type"], statusStr, outCount }
     };
   });
 
@@ -239,7 +246,7 @@ async function main(): Promise<void> {
     };
   });
 
-  await record("S4", "客户端指定 prompt_id + 同 id 重复提交", async () => {
+  await record("S4", "客户端指定 prompt_id + 同 id 重复提交行为", async () => {
     const graph = tiny();
     if (!graph) return { status: "na", detail: "无可用模型三件套" };
     const myId = randomUUID();
@@ -248,11 +255,23 @@ async function main(): Promise<void> {
     const r2 = await client.http.submitPrompt(graph, { clientId: client.clientId, promptId: myId });
     const echo2 = r2.ok ? r2.promptId : "<rejected>";
     const accepted = r1.ok && echo === myId;
+    // 等待两次提交全部执行完毕，用 execution_start 计数验证是否重复执行
+    await waitFor(
+      () => eventFor(myId).filter((e) => e["type"] === "execution_start").length >= 2,
+      240_000,
+      "同 id 两次执行开始"
+    );
+    await waitFor(
+      () => eventFor(myId).filter((e) => e["type"] === "execution_success").length >= 2,
+      240_000,
+      "同 id 两次执行成功"
+    );
+    const starts = eventFor(myId).filter((e) => e["type"] === "execution_start").length;
     const dupBehavior = !r2.ok ? "rejected" : echo2 === myId ? "accepted-same-id" : `new-id-assigned(${echo2})`;
     return {
-      status: accepted ? "pass" : "fail",
-      detail: `指定 id 被回显=${accepted}; 重复提交行为=${dupBehavior}`,
-      evidence: { myId, r1Echo: echo, r2Echo: echo2, dupBehavior }
+      status: accepted && starts === 2 ? "pass" : "fail",
+      detail: `指定 id 被回显=${accepted}; 重复提交=${dupBehavior}; 实际执行次数=${starts}（=2 表示无执行级去重，history 键覆盖会掩盖）`,
+      evidence: { myId, r1Echo: echo, r2Echo: echo2, dupBehavior, executionStartCount: starts }
     };
   });
 
@@ -266,20 +285,27 @@ async function main(): Promise<void> {
     const a = ra.promptId;
     const b = rb.promptId;
 
-    // 等 A 真正开始执行（模型已缓存，应较快）
+    // 前置断言：A 正在执行、B 仍在排队
     await waitFor(() => eventFor(a).some((e) => e["type"] === "executing"), 120_000, "A 开始执行");
+    const q0 = await client.http.getQueue();
+    const bQueuedBefore = q0.queue_pending.some((it) => queueEntryPromptId(it) === b);
 
     // 1) 中断"排队中"的 B（按 prompt_id）
     await client.http.interrupt(b);
     await sleep(2000);
-    const interruptedForB = eventFor(b).some((e) => e["type"] === "execution_interrupted");
-    const interruptedForA = eventFor(a).some((e) => e["type"] === "execution_interrupted");
     const q1 = await client.http.getQueue();
-    const bStillQueued = [...q1.queue_pending, ...q1.queue_running].some((it) => it[2] === b);
+    const bRemovedFromQueue = ![...q1.queue_pending, ...q1.queue_running].some((it) => queueEntryPromptId(it) === b);
+    const interruptedForB = eventFor(b).some((e) => e["type"] === "execution_interrupted");
+    // 不误伤断言：此刻 A 必须仍未收到 interrupted（继续执行中）
+    const aNotHurt = !eventFor(a).some((e) => e["type"] === "execution_interrupted");
+    const aStillRunning =
+      eventFor(a).some((e) => e["type"] === "progress" || e["type"] === "progress_state" || e["type"] === "executing") && aNotHurt;
 
-    // 2) 若 B 仍在队列，尝试 POST /queue {delete:[b]}
+    // 2) 真实语义（docs/003 F5 修正）：interrupt 对排队任务是 no-op——B 应仍在队列；
+    //    取消排队任务的正确方式是 POST /queue {delete:[b]}，此处验证之
     let queueDeleteWorked: boolean | null = null;
-    if (bStillQueued) {
+    const queuedInterruptIsNoop = !bRemovedFromQueue; // B 仍在队列 = interrupt(排队) 为 no-op
+    if (queuedInterruptIsNoop) {
       const resp = await fetch(`${COMFYUI_URL}/queue`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -287,14 +313,15 @@ async function main(): Promise<void> {
       });
       await sleep(800);
       const q2 = await client.http.getQueue();
-      queueDeleteWorked = resp.ok && ![...q2.queue_pending, ...q2.queue_running].some((it) => it[2] === b);
+      queueDeleteWorked = resp.ok && ![...q2.queue_pending, ...q2.queue_running].some((it) => queueEntryPromptId(it) === b);
     }
 
-    // 3) 中断"执行中"的 A（按 prompt_id）
+    // 3) 中断"执行中"的 A（按 prompt_id）——必须真正收到 interrupted 事件
     await client.http.interrupt(a);
-    await waitFor(() => eventFor(a).some((e) => e["type"] === "execution_interrupted"), 20_000, "A 的 interrupted 事件").catch(() => undefined);
+    await waitFor(() => eventFor(a).some((e) => e["type"] === "execution_interrupted"), 20_000, "A 的 interrupted 事件");
     const aInterrupted = eventFor(a).some((e) => e["type"] === "execution_interrupted");
     const histA = await client.http.getHistory(a);
+    const histATerminal = String((histA?.status as Record<string, unknown>)?.["status_str"] ?? "<无>");
 
     // 清理：确保队列清空（防止遗留长任务）
     await fetch(`${COMFYUI_URL}/queue`, {
@@ -303,10 +330,13 @@ async function main(): Promise<void> {
       body: JSON.stringify({ delete: [a, b] })
     }).catch(() => undefined);
 
+    const ok =
+      bQueuedBefore && queuedInterruptIsNoop && queueDeleteWorked === true &&
+      aNotHurt && aStillRunning && aInterrupted;
     return {
-      status: "pass",
-      detail: `interrupt(排队B): B收到interrupted=${interruptedForB}, A被误伤=${interruptedForA}, B仍在队列=${bStillQueued}; /queue delete B=${queueDeleteWorked}; interrupt(执行A): interrupted=${aInterrupted}`,
-      evidence: { a, b, interruptedForB, interruptedForA, bStillQueued, queueDeleteWorked, aInterrupted, historyAStatus: histA?.status ?? null }
+      status: ok ? "pass" : "fail",
+      detail: `前置(B在队列)=${bQueuedBefore}; interrupt(排队B)=no-op（B仍在队列=${queuedInterruptIsNoop}，无事件=${interruptedForB}，不误伤A=${aNotHurt && aStillRunning}）; /queue delete B=${queueDeleteWorked}; interrupt(执行A): interrupted=${aInterrupted}, history终态=${histATerminal}`,
+      evidence: { a, b, bQueuedBefore, queuedInterruptIsNoop, interruptedForB, aNotHurt, aStillRunning, queueDeleteWorked, aInterrupted, historyATerminal: histATerminal }
     };
   });
 
@@ -425,6 +455,7 @@ async function finish(): Promise<void> {
   await writeFile(RESULT_FILE, JSON.stringify(summary, null, 2), "utf8");
   console.log(`\n结果: pass=${summary.pass} fail=${summary.fail} na=${summary.na}`);
   console.log(`明细: ${RESULT_FILE}`);
+  if (summary.fail > 0) process.exitCode = 1; // 有 fail 必须非零退出（禁止无条件 pass）
 }
 
 void main().catch((err) => {

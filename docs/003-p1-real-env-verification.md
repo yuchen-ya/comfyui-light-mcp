@@ -39,13 +39,15 @@
 
 **F4 · 事件名录漂移**：0.41 新增 `progress_state`（`{prompt_id, nodes:{id:{value,max,state,…}}}` 每 node 进度）；传统 `progress`（`{value,max,prompt_id,node}`）**仍并存**（KSampler 仍发）。`execution_success` 存在。`execution_cached` 存在（v1 忽略）。→ translateJobEvent 两者都映射为 progress（已实现+测试）。`executing` 的 `data.node=null` 完毕哨兵**本轮未捕获样本**（成功路径由 execution_success 终结），标注未验证，兼容逻辑保留。
 
-**F5 · /interrupt 按 prompt_id**：对**排队中**任务 = 从队列移除（无任何 WS 事件、不误伤正在执行的其他任务）；对**执行中**任务 = 触发 `execution_interrupted` 广播 + history 记录 error 终态。→ cancel 语义可直接用 interrupt(prompt_id) 覆盖两种状态，无需依赖 /queue delete。
+**F5 · /interrupt 按 prompt_id（Task 003 A2 严格断言修正版）**：对**执行中**任务 = 触发 `execution_interrupted` 广播 + history error 终态 ✓；对**排队中**任务 = **no-op**（不移除、无事件、不报错、**不误伤正在执行的其他任务**——A 当时在执行却未受 interrupt(B) 影响，证明服务端确实按 prompt_id 判定且仅对执行中 id 生效）。**取消排队任务必须用 `POST /queue {delete:[prompt_id]}`（已验证有效）**。→ cancel 实现须组合两招：queued → queue delete；executing → interrupt。〔初版报告此处结论有误（被队列索引误读掩盖），已在 Task 003 中以严格断言+实测修正〕
 
 **F6 · /history 完备性**：成功（outputs+status_str=success+completed）、失败（status_str=error，含 messages 数组完整事件回放）、中断（error 终态）均可仅凭 history 判定。→ 重启恢复与 WS 断线兜底以 history 为唯一事实源成立（S7 验证）。注意 history 为**键覆盖**字典，配合 F2 意味着 history 不能证明"只执行过一次"。
 
 **F7 · /view 与本地 output 对应**：`GET /view?filename=&subfolder=&type=output` 返回的字节与本地 `output/<subfolder>/<filename>` sha256 一致。→ AUTO_SAVE 落盘与 get_result 本地路径策略（002 已确认）成立。
 
 **F8 · /object_info combo 规格漂移**：旧版 `[类型名字符串, 值数组]` → 0.41 `[值数组, 配置对象{tooltip}]`（值在 `spec[0]`）。→ manifest 生成辅助与任何 combo 解析须双形状兼容（smoke 已实现 `comboValues()` 双形状）。
+
+**F10 · /queue 元组布局漂移（Task 003 实测补录）**：旧版 `[序号, 批号, prompt_id, 图, ...]`（prompt_id 在 index 2）→ 0.41 `[序号, prompt_id, 图, ...]`（**prompt_id 在 index 1**）。初版冒烟因沿用 index 2 产生了两处误读（"interrupt 移除排队任务"实为 no-op，见 F5 修正）。→ 客户端已提供 `queueEntryPromptId()` 兼容两种布局。
 
 **F9 · 提交校验错误的载体**：未知节点类 → 400 + `error` 字段结构化（type/message/details/extra_info），`node_errors` 为空。参数级错误（值不在 combo 等）预期走 `node_errors`，**本环境未捕获 node_errors 非空样本**（未验证，P2 manifest 校验会前置拦截大部分）。
 

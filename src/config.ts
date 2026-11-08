@@ -33,7 +33,18 @@ const rawSchema = z.object({
   OUTPUT_DIR: z.string().default("./output"),
   AUTO_SAVE_OUTPUTS: boolish,
   MAX_IN_FLIGHT: positiveInt(1, 64),
-  MAX_QUEUED_JOBS: positiveInt(1, 64)
+  MAX_QUEUED_JOBS: positiveInt(1, 64),
+  JOB_TIMEOUT_MS: z
+    .string()
+    .default("600000")
+    .transform((v, ctx) => {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 10_000 || n > 86_400_000) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `须为 10000–86400000 的整数毫秒，实际: "${v}"` });
+        return z.NEVER;
+      }
+      return n;
+    })
 });
 
 export interface AppConfig {
@@ -46,6 +57,8 @@ export interface AppConfig {
   readonly maxInFlight: number;
   /** ComfyUI 队列占用窗口（仅 queued），须 ≤ maxInFlight */
   readonly maxQueuedJobs: number;
+  /** 单 job 墙钟超时（触发即尽力 interrupt/queue delete） */
+  readonly jobTimeoutMs: number;
 }
 
 export class ConfigError extends Error {
@@ -64,7 +77,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     "OUTPUT_DIR",
     "AUTO_SAVE_OUTPUTS",
     "MAX_IN_FLIGHT",
-    "MAX_QUEUED_JOBS"
+    "MAX_QUEUED_JOBS",
+    "JOB_TIMEOUT_MS"
   ]) {
     const v = env[key];
     if (v !== undefined && v !== "") picked[key] = v;
@@ -86,7 +100,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     outputDir: r.OUTPUT_DIR,
     autoSaveOutputs: r.AUTO_SAVE_OUTPUTS,
     maxInFlight: r.MAX_IN_FLIGHT,
-    maxQueuedJobs: r.MAX_QUEUED_JOBS
+    maxQueuedJobs: r.MAX_QUEUED_JOBS,
+    jobTimeoutMs: r.JOB_TIMEOUT_MS
   });
 }
 
