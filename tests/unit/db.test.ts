@@ -1,7 +1,46 @@
 import { describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { openDb } from "../../src/core/storage/db.js";
+import { legacyDb } from "../helpers/legacy-db.js";
 
 describe("storage db", () => {
+  it.each([4, 5])("schema v%s gains a persistent guard that rejects legacy writes and permits main after reopening", async (version) => {
+    const dir = await mkdtemp(path.join(tmpdir(), "writer-guard-"));
+    const file = path.join(dir, "guard.db");
+    const old = legacyDb(file, "v4");
+    old.pragma(`user_version = ${version}`);
+    old.close();
+    const db = openDb(file);
+    db.prepare("INSERT INTO kv (key,value) VALUES (?,?)").run("probe", "before");
+    db.close();
+    const legacy = new Database(file);
+    try {
+      expect(legacy.prepare("SELECT value FROM kv WHERE key='probe'").get()).toEqual({ value: "before" });
+      for (const table of ["batches", "jobs", "job_attempts", "kv"]) {
+        const column = table === "kv" ? "key" : "id";
+        for (const sql of [`INSERT INTO ${table} (${column}) VALUES ('legacy')`,
+          `UPDATE ${table} SET ${column} = ${column}`, `DELETE FROM ${table}`]) {
+          expect(() => legacy.exec(sql)).toThrow(/comfyui_light_writer_version/);
+        }
+      }
+    } finally {
+      legacy.close();
+    }
+    const reopened = openDb(file);
+    try {
+      reopened.prepare("UPDATE kv SET value=? WHERE key=?").run("after", "probe");
+      expect(reopened.prepare("SELECT value FROM kv WHERE key='probe'").get()).toEqual({ value: "after" });
+      reopened.prepare("DELETE FROM kv WHERE key=?").run("probe");
+      expect(reopened.pragma("user_version", { simple: true })).toBe(5);
+    } finally {
+      reopened.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("打开即迁移到 v5（user_version=5），幂等", () => {
     const db = openDb(":memory:");
     expect(db.pragma("user_version", { simple: true })).toBe(5);

@@ -106,6 +106,9 @@ export function openDb(file: string | ":memory:"): Database.Database {
 export function migrate(db: Database.Database): void {
   const current = db.pragma("user_version", { simple: true }) as number;
   if (current > 5) throw new Error(`Unsupported database schema v${current}; preserve the database and use a compatible application version.`);
+  // Legacy clients do not all reject newer schemas. Persisted triggers require
+  // this connection-local capability before allowing writes to v5 user data.
+  db.function("comfyui_light_writer_version", () => 5);
   db.transaction(() => {
     for (const m of MIGRATIONS) {
       if (m.version <= current) continue;
@@ -176,6 +179,16 @@ WHERE status = 'pending' AND attempt_no > 0 AND batch_id IN (SELECT id FROM batc
     AND a.attempt_no = jobs.attempt_no AND a.terminal_confirmed = 1);
 `);
       db.pragma("user_version = 5");
+    }
+    for (const table of ["batches", "jobs", "job_attempts", "kv"]) {
+      for (const operation of ["INSERT", "UPDATE", "DELETE"]) {
+        db.exec(`CREATE TRIGGER IF NOT EXISTS guard_v5_${table}_${operation.toLowerCase()}
+BEFORE ${operation} ON ${table}
+BEGIN
+  SELECT CASE WHEN comfyui_light_writer_version() != 5
+    THEN RAISE(ABORT, 'A v5-compatible application is required to write this database') END;
+END;`);
+      }
     }
   })();
 }
