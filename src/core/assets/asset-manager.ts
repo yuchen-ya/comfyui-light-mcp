@@ -1,9 +1,11 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ComfyClient } from "../client/index.js";
 import type { HistoryEntry, HistoryNodeOutputs } from "../client/types.js";
 import { jailedJoin, safeFileName } from "./path-jail.js";
 import type { JobOutputAsset } from "../batch/store.js";
+import { atomicWrite, checkLocalPath } from "./local-files.js";
+
+type OutputRef = Pick<JobOutputAsset, "kind" | "filename" | "subfolder" | "type">;
 
 /**
  * Asset Manager：输出收获与落盘（docs/002 §6.2 输出落盘决策）。
@@ -67,32 +69,45 @@ export class AssetManager {
   async downloadRefs(
     batchId: string,
     idx: number,
-    refs: Array<{ kind: JobOutputAsset["kind"]; filename: string; subfolder: string; type: string }>
+    refs: OutputRef[]
   ): Promise<JobOutputAsset[]> {
     const saved: JobOutputAsset[] = [];
-    const usedNames = new Set<string>();
-    for (const ref of refs) {
-      const base = safeFileName(ref.filename);
-      let target = base;
-      let n = 2;
-      while (usedNames.has(target)) {
-        const ext = path.extname(base);
-        const stem = path.basename(base, ext);
-        target = `${stem}-${n}${ext}`;
-        n++;
-      }
-      usedNames.add(target);
-      const localPath = jailedJoin(this.outputDir, batchId, String(idx), target);
-      await mkdir(path.dirname(localPath), { recursive: true });
-      const res = await this.client.http.downloadOutput({
-        filename: ref.filename,
-        subfolder: ref.subfolder,
-        type: ref.type
-      });
-      const buf = Buffer.from(await res.arrayBuffer());
-      await writeFile(localPath, buf);
-      saved.push({ ...ref, local_path: localPath, bytes: buf.length });
+    const targets = this.outputPaths(batchId, idx, refs);
+    for (const [i, ref] of refs.entries()) {
+      saved.push(await this.downloadRef(ref, targets[i]!));
     }
     return saved;
+  }
+
+  outputPaths(batchId: string, idx: number, refs: OutputRef[]): string[] {
+    const usedNames = new Set<string>();
+    return refs.map((ref) => this.outputPath(batchId, idx, ref.filename, usedNames));
+  }
+
+  outputPath(batchId: string, idx: number, filename: string, usedNames: Set<string>): string {
+    const base = safeFileName(filename);
+    let target = base;
+    let n = 2;
+    while (usedNames.has(target.toLowerCase())) {
+      const ext = path.extname(base);
+      const stem = path.basename(base, ext);
+      target = `${stem}-${n}${ext}`;
+      n++;
+    }
+    usedNames.add(target.toLowerCase());
+    return jailedJoin(this.outputDir, batchId, String(idx), target);
+  }
+
+  async downloadRef(ref: OutputRef, localPath: string): Promise<JobOutputAsset> {
+    await checkLocalPath(this.outputDir, localPath);
+    const res = await this.client.http.downloadOutput({
+      filename: ref.filename,
+      subfolder: ref.subfolder,
+      type: ref.type
+    });
+    if (!res.ok) throw new Error(`Output download HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    await atomicWrite(this.outputDir, localPath, buf);
+    return { ...ref, local_path: localPath, bytes: buf.length };
   }
 }

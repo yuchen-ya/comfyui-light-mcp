@@ -42,5 +42,8 @@ export function safeFileName(name: string): string {
   // Windows 保留字符（含控制字符 0x00-0x1f，属安全校验的刻意使用）
   // eslint-disable-next-line no-control-regex
   if (/[<>:"|?*\x00-\x1f]/.test(name)) throw new PathJailError(`文件名含 Windows 保留字符: "${name}"`);
+  if (/[. ]$/.test(name) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) {
+    throw new PathJailError(`文件名含 Windows 设备名或末尾点/空格: "${name}"`);
+  }
   return name;
 }

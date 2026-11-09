@@ -119,15 +119,20 @@ export function createMcpServer(engine: Engine): McpServer {
     "get_result",
     {
       description:
-        "查询单个运行的结果与状态；succeeded 后 outputs 为本地绝对路径文件清单（AUTO_SAVE_OUTPUTS=false 时在查询时按需下载）。可用 get_batch 查批量全貌。",
+        "查询结果：省略 mode 时返回 index 指定的单项详情（默认 0）。mode=index 将全部 job 的精简结果写入本地 JSONL 索引，只返回计数、complete、index_path 和更新时间；complete 仅表示执行均已终结，unavailable_outputs 表示尚不可用文件数。默认按需下载，不触发生成；可用 get_batch 轮询进度。",
       inputSchema: {
         batch_id: z.string().describe("run_workflow 返回的 batch_id"),
+        mode: z.enum(["index"]).optional().describe("index：批次完整本地索引；省略：兼容单项查询"),
         index: z.number().int().min(0).default(0).describe("运行序号（单运行为 0）"),
         download: z.boolean().default(true).describe("succeeded 且输出未落盘时按需下载（默认 true，幂等）")
       }
     },
-    async ({ batch_id, index, download }) => {
+    async ({ batch_id, mode, index, download }) => {
       try {
+        if (mode === "index") {
+          const result = await engine.getResultIndex(batch_id, { download });
+          return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+        }
         return ok(await engine.getResult(batch_id, index, { download }));
       } catch (e) {
         return toolError(e);

@@ -34,7 +34,7 @@ describe("safeFileName", () => {
     expect(safeFileName("ComfyUI_00042_.png")).toBe("ComfyUI_00042_.png");
   });
 
-  const badNames = ["", ".", "..", "a/b", "a\\b", "C:x", 'a"b', "a<b", "a|b", "a?b", "a*b"];
+  const badNames = ["", ".", "..", "a/b", "a\\b", "C:x", 'a"b', "a<b", "a|b", "a?b", "a*b", "NUL", "CON.png", "lpt1.txt", "image.", "image "];
   for (const n of badNames) {
     it(`拒绝 "${n}"`, () => {
       expect(() => safeFileName(n)).toThrow(PathJailError);

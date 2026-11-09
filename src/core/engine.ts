@@ -2,7 +2,8 @@ import type Database from "better-sqlite3";
 import type { AppConfig } from "../config.js";
 import type { ComfyClient } from "./client/index.js";
 import { WorkflowRegistry, type LoadReport } from "./workflow/registry.js";
-import { BatchStore, type JobOutputAsset } from "./batch/store.js";
+import { BatchStore } from "./batch/store.js";
+import { ResultDelivery, type BatchResultIndex } from "./batch/result-delivery.js";
 import { JobRunner } from "./batch/runner.js";
 import { JobTracker } from "./batch/tracker.js";
 import { BatchManager, type BatchView, type RunSpec, computeRequestFingerprint, assertIdempotencyMatch } from "./batch/manager.js";
@@ -51,6 +52,7 @@ export class Engine {
   readonly manager: BatchManager;
   readonly scheduler: Scheduler;
   private readonly assets: AssetManager;
+  private readonly results: ResultDelivery;
   private recovery: Promise<RecoveryReport> | null = null;
   private lastReconciledAt = 0;
   private connectionEpoch = -1;
@@ -63,6 +65,7 @@ export class Engine {
     this.registry = new WorkflowRegistry(config.workflowsDir);
     this.store = new BatchStore(db);
     this.assets = new AssetManager(client, config.outputDir);
+    this.results = new ResultDelivery(this.store, this.assets, config.outputDir, this.registry);
     this.tracker = new JobTracker({
       client,
       store: this.store,
@@ -213,17 +216,11 @@ export class Engine {
     if (opts.download !== false && job.status === "succeeded") {
       const missing = outputs.filter(
         (o) => typeof o["local_path"] === "string" && (o["local_path"] as string) === ""
-      ) as Array<Pick<JobOutputAsset, "kind" | "filename" | "subfolder" | "type">>;
+      );
       if (missing.length > 0) {
-        const downloaded = await this.assets.downloadRefs(batchId, index, missing);
-        const byRef = new Map(downloaded.map((d) => [`${d.filename}|${d.subfolder}`, d]));
-        outputs = outputs.map((o) => {
-          const lp = o["local_path"];
-          if (typeof lp === "string" && lp !== "") return o;
-          const hit = byRef.get(`${String(o["filename"])}|${String(o["subfolder"] ?? "")}`);
-          return hit ? (hit as unknown as Record<string, unknown>) : o;
-        });
-        this.store.patchJob(job.id, { outputs_json: JSON.stringify(outputs) });
+        const collected = await this.results.collect(job, true);
+        if (collected.failure) throw collected.failure;
+        outputs = collected.assets as unknown as Array<Record<string, unknown>>;
       }
     }
     let error = null;
@@ -251,6 +248,11 @@ export class Engine {
       outputs,
       error
     };
+  }
+
+  /** Batch delivery snapshot; does not start/retry generation. */
+  getResultIndex(batchId: string, opts: { download?: boolean } = {}): Promise<BatchResultIndex> {
+    return this.results.index(batchId, opts.download !== false);
   }
 
   /** 启动恢复（A1 语义 + P4.1 加固在 recovery.ts 落实；恢复后 pending job 由 Scheduler 自然续跑） */

@@ -10,6 +10,7 @@ export const INSTRUCTIONS = `ComfyUI 轻量代理：调用你已测试的 ComfyU
    - 单运行：run_workflow(workflow, params) → 用 get_result(batch_id, index) 轮询。
    - 批量：run_workflow(workflow, runs=[{label, params}, ...]) → 用 get_batch(batch_id) 轮询全貌（统计+分页任务列表）。
 3. get_result 在 status=succeeded 后 outputs 即本地绝对路径（默认已下载；AUTO_SAVE_OUTPUTS=false 时查询时按需下载，无 base64）。生成耗时取决于工作流，间隔数秒轮询即可。
+   批量取回：get_result(batch_id, mode="index") 一次取得完整 JSONL 的 index_path（每个 job 一行，含所有输出、实际 seed 和简短错误）。运行中可取快照；complete=false 时仍有未决执行。complete=true 不代表文件全部可用，还须检查 unavailable_outputs；下载失败可重试同一入口，不会重新生成。download=false 只索引已有文件。需要复现详情时再用单项接口。
 4. 参数只接受 manifest 白名单内的键；未知键/类型错误/超范围会被拒绝并给出期望值——按错误信息修正后重试。批量（runs）下单 run 参数错误记为 invalid job，不影响其余 run；单运行（params）简写则整体报错。
 
 注意：
