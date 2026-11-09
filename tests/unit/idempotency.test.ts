@@ -142,14 +142,14 @@ describe("同键同内容 / 同键不同内容", () => {
     expectConflict(() => manager.createBatch(wf, { runs: [run("a")], idempotencyKey: "k4", maxAttempts: 3 }));
   });
 
-  it("v3 前旧行（request_fingerprint=NULL）同键 → 尽力兼容按命中处理", () => {
+  it("v3 前旧行（request_fingerprint=NULL）同键 → 显式 legacy 冲突", () => {
     const r1 = manager.createBatch(wf, { runs: [run("a")], idempotencyKey: "legacy" });
     // 模拟旧行：直接抹掉请求指纹（v2 库迁移场景）
     (store as unknown as { db: { prepare: (s: string) => { run: (id: string) => unknown } } })
       .db.prepare("UPDATE batches SET request_fingerprint = NULL WHERE id = ?").run(r1.batchId);
-    const r2 = manager.createBatch(wf, { runs: [run("totally-different")], idempotencyKey: "legacy" });
-    expect(r2.reused).toBe(true);
-    expect(r2.batchId).toBe(r1.batchId);
+    expect(() => manager.createBatch(wf, { runs: [run("totally-different")], idempotencyKey: "legacy" }))
+      .toThrow(expect.objectContaining({ code: "LEGACY_IDEMPOTENCY_CONFLICT" }));
+    expect(manager.getBatchView(r1.batchId).stats.total).toBe(1);
   });
 });
 

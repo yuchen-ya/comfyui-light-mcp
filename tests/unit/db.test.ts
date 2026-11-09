@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { openDb } from "../../src/core/storage/db.js";
 
 describe("storage db", () => {
-  it("打开即迁移到 v3（user_version=3），幂等", () => {
+  it("打开即迁移到 v4（user_version=4），幂等", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(3);
+    expect(db.pragma("user_version", { simple: true })).toBe(4);
     db.close();
     const db2 = openDb(":memory:");
-    expect(db2.pragma("user_version", { simple: true })).toBe(3);
+    expect(db2.pragma("user_version", { simple: true })).toBe(4);
     db2.close();
   });
 
@@ -17,7 +17,7 @@ describe("storage db", () => {
     for (const c of ["manifest_fingerprint", "graph_fingerprint", "request_fingerprint"]) {
       expect(cols).toContain(c);
     }
-    // v2 旧库迁移上来的行（未写指纹）三列为 NULL —— 不阻断、跳过比对（尽力兼容）
+    // v2 旧库迁移上来的行（未写指纹）三列为 NULL —— 缺少历史快照，未执行任务必须暂停
     const now = new Date().toISOString();
     db.prepare(
       "INSERT INTO batches (id, workflow, workflow_version, status, total, options_json, created_at) VALUES (?,?,?,?,?,?,?)"

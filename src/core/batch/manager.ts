@@ -77,10 +77,12 @@ export function computeRequestFingerprint(wf: RegisteredWorkflow, req: CreateBat
 
 /**
  * 幂等命中校验：既有 batch 的请求指纹与本次不一致 → 抛 IDEMPOTENCY_CONFLICT。
- * v3 前旧行 request_fingerprint 为 NULL → 无法比对，按命中处理（尽力兼容，docs/006）。
+ * 旧行 request_fingerprint 为 NULL → 无法证明内容一致，返回显式 legacy 冲突（可按 ID 查询）。
  */
 export function assertIdempotencyMatch(existing: BatchRow, requestFingerprint: string): void {
-  if (existing.request_fingerprint === null) return;
+  if (existing.request_fingerprint === null) {
+    throw new ComfyLightError("LEGACY_IDEMPOTENCY_CONFLICT", "Legacy request fingerprint unavailable; equality cannot be verified. Query the existing batch by ID and reconcile remote work before creating another request.", { existing_batch_id: existing.id });
+  }
   if (existing.request_fingerprint === requestFingerprint) return;
   throw new ComfyLightError(
     "IDEMPOTENCY_CONFLICT",

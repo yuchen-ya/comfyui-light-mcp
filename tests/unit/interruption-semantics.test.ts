@@ -179,7 +179,7 @@ describe("超时取消期间的 interrupted → 仍判 timeout，保留 remote_c
     ctx.db.close();
   });
 
-  it("远端取消失败 → 仍 timeout 且 remote_cancel 记录失败明细", async () => {
+  it("远端取消失败 → 保持 unknown 且 remote_cancel 记录失败明细", async () => {
     const ctx = setup(80);
     const job = await submitOne(ctx);
     ctx.fake.interruptImpl = async () => {
@@ -188,7 +188,7 @@ describe("超时取消期间的 interrupted → 仍判 timeout，保留 remote_c
     ctx.fake.deleteQueueImpl = async () => {
       throw new Error("queue delete RPC broken");
     };
-    await eventually(() => ctx.store.getJobById(job.id)!.status === "timeout");
+    await eventually(() => ctx.store.getJobById(job.id)!.status === "submission_unknown");
     const err = readError(ctx.store, job.id);
     expect(err.remote_cancel?.queue_delete).toContain("error");
     expect(err.remote_cancel?.interrupt).toContain("error");

@@ -51,6 +51,9 @@ export class Engine {
   readonly manager: BatchManager;
   readonly scheduler: Scheduler;
   private readonly assets: AssetManager;
+  private recovery: Promise<RecoveryReport> | null = null;
+  private lastReconciledAt = 0;
+  private connectionEpoch = -1;
 
   constructor(
     readonly config: AppConfig,
@@ -74,7 +77,12 @@ export class Engine {
       registry: this.registry,
       runner: this.runner,
       maxInFlight: config.maxInFlight,
-      maxQueuedJobs: config.maxQueuedJobs
+      maxQueuedJobs: config.maxQueuedJobs,
+      isConnected: () => {
+        const stats = this.client.ws.getStats();
+        return stats.state === "open" && (stats.reconnects ?? 0) === this.connectionEpoch && this.lastReconciledAt !== 0;
+      },
+      beforeTick: () => this.reconcileConnection()
     });
   }
 
@@ -83,15 +91,17 @@ export class Engine {
     return this.registry.load();
   }
 
-  /** 启动调度（恢复完成后调用；周期定时器 unref，不阻塞进程退出） */
+  /** 启动调度；每次连接先恢复对账，周期定时器 unref。 */
   start(): void {
+    this.tracker.resume();
     this.scheduler.ensureStarted();
   }
 
-  /** 关停：调度停摆 + 释放全部跟踪资源（不改动 job 状态） */
-  stop(): void {
-    this.scheduler.stop();
-    this.tracker.disposeAll();
+  /** 关停：停止提交，等待已开始的结果收集，再释放跟踪资源。关闭 DB 前须 await。 */
+  async stop(): Promise<void> {
+    await this.scheduler.stop();
+    await this.tracker.stop();
+    this.lastReconciledAt = 0;
   }
 
   /** list_workflows：摘要 / 指定名详情 */
@@ -245,14 +255,30 @@ export class Engine {
 
   /** 启动恢复（A1 语义 + P4.1 加固在 recovery.ts 落实；恢复后 pending job 由 Scheduler 自然续跑） */
   async recover(): Promise<RecoveryReport> {
-    return recoverInFlight({
+    this.recovery ??= recoverInFlight({
       client: this.client,
       store: this.store,
       assets: this.assets,
       tracker: this.tracker,
       autoSave: this.config.autoSaveOutputs,
       registry: this.registry
-    });
+    }).finally(() => { this.recovery = null; });
+    return this.recovery;
+  }
+
+  private async reconcileConnection(): Promise<void> {
+    const stats = this.client.ws.getStats();
+    if (stats.state !== "open") {
+      this.lastReconciledAt = 0;
+      return;
+    }
+    // Bound unknown reconciliation to one pass per three seconds; reconnects
+    // bypass the interval. Scheduler serializes this before every submit loop.
+    const epoch = stats.reconnects ?? 0;
+    if (this.lastReconciledAt && epoch === this.connectionEpoch && Date.now() - this.lastReconciledAt < 3000) return;
+    await this.recover();
+    this.connectionEpoch = epoch;
+    this.lastReconciledAt = Date.now();
   }
 
   private resolveWorkflow(name: string) {

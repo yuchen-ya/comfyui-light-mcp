@@ -82,6 +82,13 @@ describe("ComfyHttp", () => {
     }
   });
 
+  it("submitPrompt 5xx is uncertain rather than a confirmed rejection eligible for retry", async () => {
+    const http = new ComfyHttp({ baseUrl: BASE,
+      fetchImpl: vi.fn().mockResolvedValue(jsonResponse(502, { error: "response lost after acceptance" })) as unknown as typeof fetch });
+    await expect(http.submitPrompt({ "1": { class_type: "X", inputs: {} } }))
+      .rejects.toMatchObject({ code: "COMFY_HTTP_ERROR" });
+  });
+
   it("getHistory：命中返回条目，未命中返回 null", async () => {
     const entry = { prompt: [], outputs: {}, status: {} };
     const hit = new ComfyHttp({

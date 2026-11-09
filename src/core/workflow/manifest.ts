@@ -41,6 +41,15 @@ function describeValue(v: unknown): string {
   return Array.isArray(v) ? "<array>" : typeof v;
 }
 
+export function seedBounds(p: Pick<ManifestParam, "min" | "max">): { min: number; max: number } {
+  return { min: Math.max(0, Math.ceil(p.min ?? 0)), max: Math.min(0xffff_ffff, Math.floor(p.max ?? 0xffff_ffff)) };
+}
+
+export function isValidSeed(p: Pick<ManifestParam, "min" | "max">, value: unknown): value is number {
+  const range = seedBounds(p);
+  return value === -1 || (typeof value === "number" && Number.isInteger(value) && value >= range.min && value <= range.max);
+}
+
 /**
  * default 完整校验（P4.1 §二.3）：default 必须自身满足该参数声明的全部约束。
  * 返回问题清单（空数组 = 通过）。在 superRefine 中调用，非法 manifest 整体拒绝注册。
@@ -77,10 +86,8 @@ export function validateParamDefault(p: ManifestParam): string[] {
 
   // seed 特殊规则：-1（随机哨兵）或 [min??0, max??0xffffffff] 内的整数（step 不适用）
   if (p.special === "seed" && isNum) {
-    if (d === -1) return issues; // 哨兵值始终合法（随机语义），不受 min 约束
-    const lo = p.min ?? 0;
-    const hi = p.max ?? 0xffff_ffff;
-    if (!Number.isInteger(d) || d < lo || d > hi) {
+    const { min: lo, max: hi } = seedBounds(p);
+    if (!isValidSeed(p, d)) {
       push(`seed 的 default 只允许 -1（每次随机）或 [${lo}, ${hi}] 内的整数，实际 ${describeValue(d)}`);
     }
     return issues;
@@ -120,6 +127,9 @@ export const manifestParamSchema = z
     }
     if (p.special === "seed" && p.type !== "integer") {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${where}: special=seed 要求 type=integer` });
+    }
+    if (p.special === "seed" && seedBounds(p).min > seedBounds(p).max) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${where}: seed range contains no valid nonnegative integer` });
     }
     if (p.required && p.default !== undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${where}: required 参数不应再提供 default` });

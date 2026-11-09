@@ -1,100 +1,71 @@
-# 006 · Task 005 交付报告：P4.1 可靠性与状态恢复加固
+# 006 · Task005R：P4.1 双分支整合返修交付报告
 
-> 时间：2026-11-09 · 分支 4.1new · 基线 dd13708 → 本次交付 · 测试：**222/222 通过**（离线 218 + 真实 e2e 4）、冒烟 11/11（含 S8 sha256 对照）、真实恢复/版本保护 e2e 新增并通过。
-> 依据：docs/002（本次修订）、docs/003–005。范围：加固现有 Batch/Job 系统，**不重构架构、不加新工具、不动默认窗口（1/1）**。
+日期：2026-11-09。分支：`codex/task005r-integration`，基于 `4.1new / 7d73c53`；参考 `4.1 / a1b037f` 的连接门控与 attempt 同步方案，未整分支合并，未修改 main。保留 canonical 指纹、paused、四个核心工具及默认 1/1 窗口。不进入 P4.2，交付后等待复审。
 
-## 一、统一任务中断状态（§二.1）
+本文替代原 4.1new 报告的验收结论。原报告的 222/222 和 11/11 冒烟属于前次交付；本轮独立执行结果见下文，不沿用其“NULL 指纹放行”“取消 RPC 即超时终态”“手动恢复代表启动恢复”的结论。
 
-四类语义严格区分，修掉了 3 处历史不一致：
+## 修复与证据
 
-| 语义 | 终态 | 本次修正点 |
-|---|---|---|
-| 用户主动取消 | `cancelled` | **WS `execution_interrupted` 曾误标 failed** → 改 cancelled（用户在 ComfyUI UI 按 Stop、外部 /interrupt 都属此类）；recovery 经 history 判 interrupted **曾误标 failed** → 改 cancelled（tracker 轮询路径此前已正确，三路现已统一） |
-| 执行超时 | `timeout` | **核心竞态修复**：超时触发的组合取消（queue delete + interrupt）会引发 ComfyUI 回发 `execution_interrupted`/history interrupted——此前该事件会把 timeout 误标为普通 failed。现 tracker 立 `timeoutCancelInFlight` 标志：取消期间到达的 interrupted 一律视为"我们自己取消的效果"，由 `handleTimeout` 统一定 **timeout**，`error_json.remote_cancel` 完整保留 `{queue_delete, interrupt}` 动作结果（ok/error 明细），错误消息注明 interrupted 为取消效果（审计可辨） |
-| ComfyUI 执行失败 | `failed` | 不变：WS `execution_error` / history `error`（含终态优先级守卫：error 先于 outputs 存在性）；取消期间收到真实 error 也按先到者判 failed |
-| 提交结果不确定 | `submission_unknown` | 不变（A1 语义） |
+以下名称可在 `tests/unit/task005r.test.ts`、`tests/unit/task005r-upgrade.test.ts`、`tests/http-mock/comfy-http.test.ts` 和 `tests/integration/real-process-crash.e2e.test.ts` 中定位。
 
-竞态窗口细节：取消期间收到 `execution_success`（任务恰好在取消瞬间完成）→ success 的异步结算（settleFromHistory）被 `handleTimeout` 显式等待（`asyncSettle`），先到者为准不改判 timeout；结算因 interrupted 推迟时才落到 timeout——两个方向都不再互相踩踏。未来 `cancel_batch` 的取消路径复用同一状态机（用户取消 → cancelled），本任务未实现该工具（按约束不加功能）。
+| 项目 / 测试名 | 故障注入点 | POST /prompt | 最终状态 / 断言 |
+|---|---|---:|---|
+| R1 · `offline startup gates pending; delayed connection automatically reconciles all in-flight states without POST` | 预置 pending、queued、executing、unknown；离线启动 Engine 后改变真实装配的连接状态；测试不调用 recover | 0 | pending 保留；history 成功任务 job/attempt=succeeded；queued 自动挂接；unknown 占额且不重提；后续重连自动收敛 |
+| R1 · `rechecks connection before every submission in a 2/2 window` | 第一次 POST 返回时断线 | 1 | 第二个 job=pending，无离线 claim/POST |
+| R1 · `a disconnect/reconnect during submission requires reconciliation before the next POST` | 首次提交中连接 epoch 改变，即使 WS 再次 open | 首拍 1，总计 2 | 第二次提交前先恢复第一个任务；禁止跨重连跳过对账 |
+| R1 · `query failures preserve uncertainty and distinguish failures from successful misses` | history / queue 分别抛错，反复 tick | 0 | 保留在途状态；RECONCILIATION_FAILED，不伪造“两处均无”；同一时间段不随 tick 频率无限查询 |
+| R1 · `unknown later found executing then completed converges automatically without another POST` | 已接受但提交响应丢失，稍后 queue/history 出现 | 1 | unknown 自动挂接；使用原始 deadline，完成后 job/attempt=succeeded，batch=completed |
+| R2 · `real 0.41 interruption history cancels without retry; partial outputs alone prove nothing` | 不发 WS；history 写 error + execution_interrupted | 1 | job/attempt=cancelled，batch=failed；max_attempts=2 也不重试；部分 outputs 不足以证明成功 |
+| R2 · `persisted timeout intent and original deadline survive tracker recreation` | 本地超时后取消响应丢失，重建 Engine，再出现中断 history | 2（确认中断后才允许第二次） | attempt 1=timeout；保留原始 deadline / 取消意图；新 attempt 使用新 prompt_id |
+| R3 · `timeout with ... remains in flight until remote terminal evidence`（3 项） | 两个取消 RPC 均失败、响应丢失，或均返回 HTTP 200；max_attempts=2，反复 tick | 始终 1 | 未确认时 job/attempt=submission_unknown，batch=running，在途额度=1；后来 history 成功则 job/attempt=succeeded，batch=completed |
+| R3 · `success with temporarily absent or failed history queries retries collection, never generation` | 已收 success，history 先抛错、后空、再完成 | 1 | 不发超时取消，不把结果查询失败变成生成重试；最终 succeeded/completed |
+| R3 · `submitPrompt 5xx is uncertain rather than a confirmed rejection eligible for retry` | /prompt 返回 HTTP 502 | 1 次请求 | HTTP 客户端抛不确定结果错误；Runner 按 unknown 保留；只有明确 HTTP 400 拒绝可作为提交失败证据 |
+| R4/R5 · `%s preserves history and pauses pending without fabricating a snapshot`（v2 / 4.1 / 4.1new） | 真正旧 schema 文件预置 pending，停机期间修改图，再升级 | 0 | pending=paused/LEGACY_SNAPSHOT_MISSING；不回填当前图；历史 completed/succeeded 可查询；旧 key=LEGACY_IDEMPOTENCY_CONFLICT |
+| R5 · `DDL and user_version roll back together when a migration fails` | 旧库列冲突导致中途 DDL 失败 | 0 | DDL 与 user_version 一起回滚，旧版号及已有数据保留 |
+| R3/R5 · `legacy unconfirmed timeout in a running batch keeps its slot and cannot become retryable` | v3 运行中 batch 遗留 timeout，尚无远端确认 | 0 | 转 unknown，占额=1，无重试候选；已结束历史 batch 保持只读状态 |
+| 组合窗口 · `2/2 window holds later work until the retry's remote outcome is final` | 2/2 窗口首个任务失败；重试 queued 后另一个任务完成，释放空位 | 重试未决时 3，确认成功后 4 | 后续任务持续 pending 到重试定局；旧 attempt 的迟到中断不污染新 attempt |
+| seed · `explicit and default random seeds share bounds; resolved values satisfy those bounds` | seed 的 min=10/max=20，显式 -1、-2、21 | 1 | -1 合法并在范围内随机；非法显式值拒绝；加载/运行共用 isValidSeed，随机共用 seedBounds；seed 不应用 step |
+| 异步 · `concurrent recovery/late history shares one download; graceful stop drains it before reopening` | 下载挂起时并发 recover、success、stop | 1 | 只下载一次；await stop 后 job/attempt=succeeded；重新打开不再下载、不出现过期回写 |
+| 下载 · `download failure retains references, and get_result retries only download` | 第一次输出下载失败 | 1 | job/attempt 仍 succeeded，保存输出引用；get_result 只重试下载，不生成新 prompt |
 
-## 二、工作流版本保护（§二.2）
+首次在修复前执行核心 8 项回归：7 项失败（1 项当时的弱断言未揭露缺陷）。修复后加强持久化断言，并补迁移、组合窗口、下载与连接 epoch 场景。旧测试中与本轮契约冲突的断言已更新，不再把未知取消当作 timeout，也不再把 NULL 指纹视为安全放行。
 
-- **快照**：batch 创建时保存 `workflow_version + manifest_fingerprint + graph_fingerprint`（migration v3 三新列，均在 **batches 行**——job 级不复制 workflow JSON）。指纹 = canonical JSON（递归排序键、数组有序）→ sha256：排版/键序变化不误报，语义内容变化必现；graph 指纹取**归一化后实际提交给 ComfyUI 的图**（class_type+inputs），manifest 指纹取解析后对象。
-- **验证点**：① 恢复时（`recoverInFlight` → `pauseDriftedPendingBatches`，对含 pending 的 running batch）；② 调度器每 tick 提交前（逐 job 携带 batch 快照再校验一次，双保险）；③ tick 开头的指纹对账使漂移**即时可见**（不等窗口空出）。
-- **漂移行为**：该 batch 剩余 pending → 新状态 **`paused`**（error=`WORKFLOW_VERSION_MISMATCH`，含 manifest/图指纹与版本的前后对照明细）；**绝不静默用新版本续跑旧 batch**；其他 batch 不受影响；已提交的在途 job 照常定终态（旧图已在 ComfyUI 侧执行，与漂移无关）。`get_batch` stats 单列 `paused`（绝不混入 failed），batch 因 paused 未决保持 running。
-- **解除**：工作流内容还原（指纹恢复一致）→ 调度器自动 paused→pending 续跑（暂停错误清除）；真实 e2e 验证了 漂移→暂停→还原→续跑→全批完成 全链路。仍漂移/工作流不在注册表则保持 paused。
-- **旧行兼容**：v2 库迁移上来的 batch 三指纹列为 NULL → 跳过校验（尽力兼容，不阻断旧任务），有专门测试。
+## 实现约束
 
-## 三、Manifest default 完整校验（§二.3）
+- Engine 的周期调度在首次连通、延迟首连和重连时先串行恢复；每次提交还检查 WS 状态及已对账的连接 epoch。unknown 由恢复扫描与 3 秒 Tracker 轮询持续查证，所有来源共用单个异步结算入口。查询错误保留未知性。
+- history 按 `status.messages` 的 execution_interrupted / execution_error 分类，再处理明确的成功状态；不从部分输出推断成功。WS 用户中断为 cancelled；有当前 attempt 的持久化超时取消意图时，中断为 timeout。
+- claim 事务在 POST 前写入 prompt_id、attempt 与 deadline_at；取消前事务写 cancel_requested_at；success_observed_at 跨崩溃保留结果收集意图。恢复不会重置完整超时周期。终态通过 settleAttempt 事务同步 job、attempt、batch，并检查 attempt_no/prompt_id，拒绝迟到写回。
+- `retryEligibility` 同时决定重试候选、batch 收敛和 continue_on_error 级联：仅远端已确认终止且次数未用尽的 failed/timeout 可重试。下载失败与结果查询失败不产生生成重试。
+- `Engine.stop()` 现在必须 await 后才关闭 DB；它停止新提交并等待正在收集的输出完成。强制进程终止依靠已持久化的状态恢复。
 
-`validateParamDefault`（manifest.ts，zod superRefine 内逐参数调用）——非法 manifest **整体拒绝注册**，进 LoadReport（错误精确到 `params[name]` 与原因）：
+## 数据库升级与隔离
 
-- 类型正确：string/boolean/number(有限)/integer(整数)/enum(字符串且在合法值内)；
-- min/max：default 不得越界（边界值放行）；
-- step：对齐检查相对 min（无 min 相对 0），浮点容差 1e-9 与运行期 mapper 一致；
-- enum：default ∈ enum 声明值；
-- seed：default 只允许 **-1**（随机哨兵，不受 min 约束——哨兵语义优先）或 [min??0, max??0xffffffff] 内整数；-2 / 2^32 / 2.5 均拒绝。
+选定长列名 canonical schema，升级到 **user_version=4**；迁移中的 DDL、数据更新与版本号在同一 SQLite 事务内。
 
-含 19 项专项测试（逐规则拒绝/放行 + 真实示例 manifest 全通过 + registry 拒注册联动）。
+v2 缺快照的 pending 暂停。4.1 的 manifest_fp/graph_fp/request_fp 保留原值供审计，新增长列保持 NULL，绝不把 raw-text hash 改名成 canonical hash。4.1new 已有 canonical 指纹保留。运行中旧 timeout/failed 没有远端确认时保守转 unknown；历史已经结束的 batch 保持可查询。旧请求缺指纹返回显式 legacy 冲突，不承诺请求相等。
 
-## 四、Idempotency Fingerprint（§二.4）
+评测、回退与切换实验分支须使用**独立 DATA_DIR**。升级前保留原数据库备份；不要删除数据库“修复”列错误，也不要让旧分支继续写已经升级的同一份数据。需要回退时使用对应分支的原始备份/独立目录。
 
-- `batches.request_fingerprint`（v3 列）= canonical JSON sha256，覆盖：workflow name / manifest version / **manifest+图内容指纹** / runs 内容及顺序 / continue_on_error / max_attempts（1..5 钳制归一化——99 与 5 等价）。
-- **键序无关**：stableStringify 递归排序对象键（数组保序），`{"seed":1,"prompt":"a"}` 与 `{"prompt":"a","seed":1}` 指纹一致（专项测试）；runs 顺序即语义（换序 → 不同指纹 → 冲突）。
-- 同键重放：内容一致 → 返回既有 batch（不建行、不重提）；**内容不同 → 抛 `IDEMPOTENCY_CONFLICT`**（新错误码；消息含既有 batch 短 id 与双方指纹 12 位前缀），既有 batch 完好。`runSingle`/`runBatch` 的 engine 早查路径与 `createBatch` 主路径、**并发 UNIQUE 竞争回查路径**三处统一比对（竞争测试：早查不可见→插入撞 UNIQUE→回查→同容命中/异容冲突，均正确）。
-- v3 前旧行无指纹 → 按命中处理（尽力兼容，测试覆盖）。
+## 真实 ComfyUI 与进程级证据
 
-## 五、调度组合语义（§二.5）：continue_on_error=false × max_attempts>1
+本轮实际连接到 ComfyUI **0.41.0**，未启动或修改 ComfyUI，未安装节点。使用既有示例工作流执行 GPU 任务。
 
-发现并修复一个**提前级联 bug**：原 `batchesNeedingAbort` 把"重试未用尽"的失败也当终态，同 tick 内重试再失败会立刻放弃剩余任务。修订后的精确语义（文档与状态机同步，docs/002 §6.2）：
+`real-process-crash.e2e.test.ts` 启动独立 Node 子进程。子进程完成真实 POST，并在 cancel_requested_at 落库后、首个取消 RPC 发出前挂起；父进程以 SIGKILL（Windows 为 TerminateProcess）强制结束它，重新打开磁盘 SQLite，由 Engine.start 自动恢复，不由测试调用 recover。
 
-1. **失败允许先重试**（重试优先于级联）；
-2. 重试未决期间该 batch **其余 pending 暂缓提交**（`heldPendingBatches`——不放弃也不消耗生成）；
-3. **级联取消仅在终态失败触发**：invalid（创建即终态）或 failed/timeout 且 attempt_no ≥ max_attempts；同 tick 用尽也立即拦截（提交循环每轮重查）；
-4. **在途 job 照常执行**至终态（级联只取消 pending）；
-5. **尚未提交 → cancelled/BATCH_ABORTED**（明示未消耗生成）。
+| 场景 | 真实记录 | POST 次数 | job / attempt / batch |
+|---|---|---:|---|
+| 杀进程后远端继续完成 | history.status_str=success | 1 | succeeded / succeeded / completed |
+| 杀进程后对该任务发送定向 interrupt | history.status_str=error，messages 包含 execution_interrupted | 1 | timeout / timeout / failed（本场景 max_attempts=1） |
 
-回归测试含"同 tick 内重试再失败不得提前级联"专项；对照 continue_on_error=true 全程不级联不挂起。
+上表属于本轮现场响应断言。`historyEntry(..., "interrupted")` 和单元测试中的 JSON 则是**按上游结构构造的模拟夹具**，不是抓取记录。上游依据：[v0.41.0/main.py](https://github.com/Comfy-Org/ComfyUI/blob/v0.41.0/main.py)、[v0.41.0/execution.py](https://github.com/Comfy-Org/ComfyUI/blob/v0.41.0/execution.py)。
 
-## 六、恢复 8 项（§三）——`tests/unit/recovery-hardening.test.ts` 全数落地
+## 必要检查与边界
 
-| # | 场景 | 结果 |
-|---|---|---|
-| 1 | ComfyUI 不可用时启动 | MCP/engine 正常构造；工具连通性门禁明确报 COMFY_UNREACHABLE；恢复对账不崩溃，在途保守保持 submission_unknown（下次启动再查证） |
-| 2 | 后续恢复连接 | ws 状态转 open 后调度照常提交、生成恢复，无人工干预 |
-| 3 | queued job 重新挂接 Tracker | /queue 命中 → requeued + re-track，事件照常定终态，不重提 |
-| 4 | executing job 经 history 对账 | 成功定终态 + 输出落盘（resolved 计数） |
-| 5 | pending job 继续执行 | 新调度器接管直接续跑至全批完成 |
-| 6 | submission_unknown 不重提 | 连续 3 次恢复均 keptUnknown、提交数恒 1、attempt 恒 1 行 |
-| 7 | 工作流修改后不执行旧 batch 剩余 | 恢复即暂停（WORKFLOW_VERSION_MISMATCH），多 tick 不提交；用新工作流创建的其他 batch 不受影响 |
-| 8 | 多次启动恢复不重复提交 | 两次重启恢复重挂接幂等（tracker 去重）、attempt 不增、远端零重复；已定终态 job 二次恢复 no-op，输出只收获一次 |
+- `npm run build`：通过。
+- `npm run lint`：通过。
+- `npm test -- --fileParallelism=false`：**245/245 通过**（27 个测试文件，离线 239 + 真实 ComfyUI e2e 6），零跳过。
+- 原单运行、10 任务批量、工作流漂移/还原恢复的 4 项真实 e2e，以及新增 2 项进程强制终止真实 e2e，均已独立执行通过。前者的 stop/重建对象测试与后者的强制进程终止测试分别记录。
+- 本轮未重跑原 11 项 smoke 脚本；不据前次报告宣称本轮 smoke 通过。未测试其他 ComfyUI 版本、远端历史清空或长时间断网压力。
+- 队列删除本身可能不产生终态 history。只有 HTTP 200 或“两处无记录”仍不足以确认旧任务已终止；这种情况继续 unknown/占额并查证，需要检查远端记录，不能靠新 key 绕过。此为保守安全边界，无新增工具。
 
-## 七、SQLite Migration v3
-
-```sql
-ALTER TABLE batches ADD COLUMN manifest_fingerprint TEXT;
-ALTER TABLE batches ADD COLUMN graph_fingerprint TEXT;
-ALTER TABLE batches ADD COLUMN request_fingerprint TEXT;
-```
-
-三列均可空（旧行 NULL = 跳过对应校验）；`user_version=3`，幂等迁移与旧行 NULL 语义均有测试。无新表、无 job 级冗余（指纹只在 batch 行，一处存储）。
-
-## 八、测试与验收
-
-- **离线 218**（新增 63：manifest-default 19 / idempotency 13 / interruption-semantics 8 / workflow-version 8 / recovery-hardening 9 / scheduler-combination 6，另 db v3 迁移测试扩充；既有断言随 stats 增补 `paused` 键同步更新）；既有 155 离线全保持。
-- **真实 e2e 4**（ComfyUI 0.41.0）：既有单运行 + 10 任务批量保持通过（新指纹链路下 stats 逐键断言含 paused:0）；**新增 `real-recovery.e2e`**：3 任务批量 → job0 完成即"崩溃"（engine/client/db 全销毁，仅 SQLite 存活）→ 用 **denoise 漂移的工作流**重启 → 恢复：job1 在途重挂接自然完成、job2 被 WORKFLOW_VERSION_MISMATCH 暂停且 4 秒多 tick 零提交（未静默用新版本）→ 用**还原的工作流**再重启 → 暂停自动解除续跑 → 3/3 completed；全程每个 job 恰 1 行 attempt（两次重启零重复提交）；真实栈上同键异容 → IDEMPOTENCY_CONFLICT、同键同容 → 复用。
-- **冒烟 11/11 保持**（scripts/smoke-real-comfyui.ts，P1 假设回归）。
-- build / lint / test 全绿；隐私扫描（AGENTS.md 要求）：新增内容无密钥/令牌/本机绝对路径（e2e 产物在 gitignored `.analysis/`）。
-
-## 九、docs/002 修订摘要
-
-§4.3 Scheduler 三步→五步（指纹对账/终态级联/held）；§5 default 完整校验；§6.1 v3 迁移与指纹定义；§6.2 状态机图（paused 边）+ 中断终态四类对照表 + 组合语义 5 条 + 版本保护/幂等指纹/恢复流程（含 pausedOnVersionMismatch 与多次恢复幂等）；§7 get_batch stats/过滤词表 + paused；§10 P4 行标注 P4.1 完成。
-
-## 十、遗留（进入 P4.2 前待架构审查确认）
-
-1. `paused` 为可逆挂起态：自动解除仅限"指纹完全还原"；是否需要显式 resume/abandon 工具（如 `resume_batch(force)`）留待 P4.2 决策。
-2. 幂等键无 TTL（沿用 v1 现状）；docs/002 曾提 24h TTL，未实现亦未改变——是否补 TTL 待定。
-3. `submission_unknown` 在 ComfyUI 长期不可达时会占满在途窗口（设计内行为，instructions 已提示换新 batch/key）；是否加"unknown 重查证"后台任务待定。
-4. cancel_batch 工具仍未实现（约束内不新增；状态机已就绪，薄封装即可）。
-
----
-*本报告不含密钥/令牌/个人信息/本机绝对路径。完成后停在 P4.1，等待架构审查，不进入 P4.2。*
+本次变更在提交前逐文件检查代码、测试与文档及隐私信息；不提交运行数据库、实际输出、本机私有路径、密钥或令牌。交付后停止，等待复审。

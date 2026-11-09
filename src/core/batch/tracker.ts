@@ -1,25 +1,9 @@
 import type { ComfyClient } from "../client/index.js";
-import type { AssetManager } from "../assets/asset-manager.js";
-import type { BatchStore } from "./store.js";
-import { type JobRow, type JobError, type JobOutputAsset } from "./store.js";
-
-/**
- * JobTracker：在途 job 的后台跟踪。
- * - WS 事件（按 prompt_id 多路分解）驱动状态推进
- * - history 轮询兜底（每 3s）：WS 丢失/断线也能定终态（P1 S7 已验证该路径可靠）
- * - 墙钟超时：queued→POST /queue delete + executing→POST /interrupt 组合取消
- *   （docs/003 F5：interrupt 对排队任务是 no-op，两动作对错误态均为无害 no-op → 竞态安全）
- * - History 终态优先级（Task 004 §二.1）：error/interrupted 判定优先于 outputs 存在性，
- *   error 绝不因存在部分 outputs 被标成 succeeded
- * - 中断终态语义（P4.1 统一）：
- *   · 用户/外部中断（execution_interrupted / history interrupted，非超时取消引发）→ cancelled
- *   · 超时取消过程中收到的 interrupted 是我们自己取消的效果 → 仍定 timeout（保留 remote_cancel）
- *   · 未来 cancel_batch 的取消路径 → cancelled（复用本语义，cancelIntent 扩展 "user"）
- * - 成功 → /history 收获输出 → AUTO_SAVE 落盘（false 时存引用，get_result 按需下载）
- */
+import { queueEntryPromptId, type HistoryEntry } from "../client/types.js";
+import { harvestOutputRefs, type AssetManager } from "../assets/asset-manager.js";
+import { IN_FLIGHT_STATUSES, type BatchStore, type JobRow, type JobError, type JobOutputAsset } from "./store.js";
 
 const HISTORY_POLL_MS = 3_000;
-
 export interface TrackerDeps {
   client: ComfyClient;
   store: BatchStore;
@@ -27,248 +11,256 @@ export interface TrackerDeps {
   autoSave: boolean;
   defaultTimeoutMs: number;
 }
-
 interface Tracked {
   job: JobRow;
   unsubscribe: () => void;
   pollTimer: NodeJS.Timeout | null;
   timeoutTimer: NodeJS.Timeout | null;
   settled: boolean;
-  /** 超时取消进行中：此期间到达的 interrupted 事件是我们自己取消的效果，终态仍为 timeout */
-  timeoutCancelInFlight: boolean;
-  /** 超时取消期间实际收到了 interrupted（写入 timeout 错误消息，便于审计） */
-  sawInterruptedDuringTimeoutCancel: boolean;
-  /** 进行中的异步结算（success → settleFromHistory）：handleTimeout 须等它定局再判 timeout（先到者为准） */
   asyncSettle: Promise<void> | null;
+  cancelInFlight: boolean;
+  sawInterrupted: boolean;
 }
 
-/** history.status → 终态判定（优先级：error/interrupted > success/completed > 有输出） */
-export function historyVerdict(entry: {
-  status?: Record<string, unknown>;
-  outputs?: Record<string, unknown>;
-}): "success" | "error" | "interrupted" | null {
-  const s = entry.status as Record<string, unknown> | undefined;
-  const str = String(s?.["status_str"] ?? "");
-  if (str === "error") return "error";
-  if (str === "interrupted") return "interrupted";
-  if (str === "success" || s?.["completed"] === true) return "success";
-  const hasOutputs = Object.values(entry.outputs ?? {}).some(
-    (o) => o !== null && typeof o === "object" && Object.keys(o as object).length > 0
-  );
-  if (hasOutputs) return "success"; // 无显式状态但有输出（兼容路径；显式 error 已在上方排除）
+/** ComfyUI 0.41 writes interruptions as status_str=error with a terminal message. */
+export function historyVerdict(entry: { status?: Record<string, unknown>; outputs?: Record<string, unknown> }): "success" | "error" | "interrupted" | null {
+  const status = entry.status;
+  const messages = Array.isArray(status?.["messages"]) ? status["messages"] : [];
+  for (const message of [...messages].reverse()) {
+    if (!Array.isArray(message)) continue;
+    if (message[0] === "execution_interrupted") return "interrupted";
+    if (message[0] === "execution_error") return "error";
+  }
+  if (status?.["status_str"] === "error") return "error";
+  if (status?.["status_str"] === "success" && status["completed"] === true) return "success";
   return null;
 }
 
 export class JobTracker {
-  private readonly tracked = new Map<string, Tracked>(); // key: jobId
-
+  private readonly tracked = new Map<string, Tracked>();
+  private stopping = false;
   constructor(private readonly deps: TrackerDeps) {}
 
+  get timeoutMs(): number {
+    return this.deps.defaultTimeoutMs;
+  }
   isTracked(jobId: string): boolean {
     return this.tracked.has(jobId);
   }
-
-  /** 清理全部跟踪资源（测试/关停用；不改动 job 状态） */
   disposeAll(): void {
-    for (const t of [...this.tracked.values()]) {
+    for (const t of [...this.tracked.values()]) this.release(t);
+  }
+
+  resume(): void {
+    this.stopping = false;
+  }
+
+  /** Graceful stop drains collection before the DB is closed. Hard process
+   * termination instead relies on persisted intent and recovery. */
+  async stop(): Promise<void> {
+    this.stopping = true;
+    const active = [...this.tracked.values()];
+    for (const t of active) {
       t.unsubscribe();
       if (t.pollTimer) clearInterval(t.pollTimer);
       if (t.timeoutTimer) clearTimeout(t.timeoutTimer);
     }
-    this.tracked.clear();
+    await Promise.all(active.map((t) => t.asyncSettle));
+    this.disposeAll();
+  }
+
+  private active(t: Tracked): boolean {
+    if (t.settled || this.tracked.get(t.job.id) !== t) return false;
+    const current = this.deps.store.getJobById(t.job.id)!;
+    return current.attempt_no === t.job.attempt_no && current.prompt_id === t.job.prompt_id && IN_FLIGHT_STATUSES.includes(current.status);
   }
 
   track(job: JobRow): void {
-    if (!job.prompt_id || this.tracked.has(job.id)) return;
-    const promptId = job.prompt_id;
+    if (this.stopping || !job.prompt_id || this.tracked.has(job.id)) return;
     const t: Tracked = {
       job,
       unsubscribe: () => {},
       pollTimer: null,
       timeoutTimer: null,
       settled: false,
-      timeoutCancelInFlight: false,
-      sawInterruptedDuringTimeoutCancel: false,
-      asyncSettle: null
+      asyncSettle: null,
+      cancelInFlight: false,
+      sawInterrupted: false
     };
-
-    // WS 事件驱动
-    t.unsubscribe = this.deps.client.bus.subscribePrompt(promptId, (e) => {
-      if (t.settled) return;
-      switch (e.type) {
+    this.tracked.set(job.id, t);
+    const attempt = this.deps.store.getAttempt(job);
+    // Pre-v4 attempts use their original submission time, never a fresh timeout period.
+    const deadline = attempt?.deadline_at ?? new Date(Date.parse(job.submitted_at ?? new Date().toISOString()) + this.timeoutMs).toISOString();
+    if (attempt && !attempt.deadline_at) this.deps.store.patchAttempt(job, { deadline_at: deadline });
+    t.unsubscribe = this.deps.client.bus.subscribePrompt(job.prompt_id, (event) => {
+      if (!this.active(t)) return;
+      switch (event.type) {
         case "started":
-          this.deps.store.patchJob(job.id, { status: "executing", started_at: new Date().toISOString() });
-          break;
         case "executing":
-          this.deps.store.patchJob(job.id, { status: "executing" });
+          this.updateInFlight(t, "executing");
           break;
         case "success":
-          // success 不可能由我们的取消引发（取消 → interrupted）：正常走 history 结算；
-          // 记录在途的异步结算，供 handleTimeout 在超时取消竞态下等待（先到者为准）
-          t.asyncSettle ??= this.settleFromHistory(t);
+          this.deps.store.patchAttempt(job, { success_observed_at: new Date().toISOString() });
+          if (t.timeoutTimer) clearTimeout(t.timeoutTimer);
+          void this.reconcile(job.id);
           break;
         case "error":
-          this.settle(t, "failed", {
-            code: "EXECUTION_ERROR",
-            message: e.message.slice(0, 500)
-          });
+          this.settle(t, "failed", { code: "EXECUTION_ERROR", message: event.message.slice(0, 500) });
           break;
         case "interrupted":
-          if (t.timeoutCancelInFlight) {
-            // 超时取消进行中：这个 interrupted 是我们组合取消的效果——
-            // 不据此定 cancelled/failed，等 handleTimeout 统一定 timeout（保留远端取消结果）
-            t.sawInterruptedDuringTimeoutCancel = true;
-            return;
-          }
-          // 用户/外部主动中断（ComfyUI UI 停止按钮、外部 /interrupt）→ cancelled（P4.1 统一语义）
-          this.settle(t, "cancelled", {
-            code: "INTERRUPTED",
-            message: "执行被中断（用户/外部 interrupt）"
-          });
+          this.settleInterrupted(t);
           break;
-        default:
-          break; // progress / executed（executed 的输出统一从 history 收获，避免双源不一致）
       }
     });
-
-    // history 轮询兜底（WS 断线/事件丢失时的第二通道）
-    t.pollTimer = setInterval(() => {
-      if (t.settled) return;
-      void this.deps.client.http
-        .getHistory(promptId)
-        .then((entry) => {
-          if (t.settled || !entry) return;
-          const verdict = historyVerdict(entry);
-          if (verdict === "success") {
-            t.asyncSettle ??= this.settleFromHistory(t, entry);
-          } else if (verdict === "error") {
-            this.settle(t, "failed", {
-              code: "EXECUTION_ERROR",
-              message: "history 轮询判定终态: error"
-            });
-          } else if (verdict === "interrupted") {
-            if (t.timeoutCancelInFlight) return; // 超时取消的效果，交给 handleTimeout 定 timeout
-            this.settle(t, "cancelled", {
-              code: "INTERRUPTED",
-              message: "history 轮询判定终态: interrupted（用户/外部中断）"
-            });
-          }
-        })
-        .catch(() => undefined); // ComfyUI 暂不可达时下轮再试
-    }, HISTORY_POLL_MS);
-
-    // 墙钟超时：先组合取消（记录远端结果），取消期间若事件已定终态则以先到者为准
-    t.timeoutTimer = setTimeout(() => {
-      if (t.settled) return;
-      void this.handleTimeout(t, promptId);
-    }, this.deps.defaultTimeoutMs);
-
-    this.tracked.set(job.id, t);
+    t.pollTimer = setInterval(() => void this.reconcile(job.id), HISTORY_POLL_MS);
+    t.pollTimer.unref();
+    if (!attempt?.cancel_requested_at && !attempt?.success_observed_at) {
+      t.timeoutTimer = setTimeout(() => void this.handleTimeout(t), Math.max(0, Date.parse(deadline) - Date.now()));
+      t.timeoutTimer.unref();
+    }
   }
 
-  private async handleTimeout(t: Tracked, promptId: string): Promise<void> {
-    // 先立 flag 再取消：取消期间到达的 interrupted/error 事件据此分流
-    t.timeoutCancelInFlight = true;
-    const remote = await this.cancelRemote(promptId);
-    if (t.settled) return; // 竞态：取消进行中 job 已由事件定终态（如恰好成功），保持原判定
-    // success 事件的异步结算（settleFromHistory）可能仍在途：等它定局——
-    // 它若结算（succeeded/failed/NO_HISTORY）则以先到者为准；若因 interrupted 推迟则落到下方 timeout
-    if (t.asyncSettle) {
-      await t.asyncSettle.catch(() => undefined);
-      if (t.settled) return;
+  /** One serialized collection per attempt, shared by recovery, WS and polling. */
+  async reconcile(jobId: string): Promise<void> {
+    const t = this.tracked.get(jobId);
+    if (!t || !this.active(t)) return;
+    t.asyncSettle ??= this.inspect(t).finally(() => { t.asyncSettle = null; });
+    await t.asyncSettle;
+  }
+
+  private async inspect(t: Tracked): Promise<void> {
+    let history: HistoryEntry | null;
+    try {
+      history = await this.deps.client.http.getHistory(t.job.prompt_id!);
+    } catch (error) {
+      if (this.active(t)) this.updateInFlight(t, undefined, { code: "RECONCILIATION_FAILED", message: `history query failed: ${String(error).slice(0, 200)}` });
+      return;
     }
-    this.settle(t, "timeout", {
-      code: "TIMEOUT",
-      message:
-        `执行超过 ${this.deps.defaultTimeoutMs}ms，已向 ComfyUI 发送组合取消（queue delete + interrupt）` +
-        (t.sawInterruptedDuringTimeoutCancel ? "；取消期间的 interrupted 事件为本次取消的效果，不改变 timeout 判定" : ""),
-      remote_cancel: remote
+    if (!this.active(t)) return;
+    if (history) {
+      const verdict = historyVerdict(history);
+      if (verdict === "interrupted") {
+        this.settleInterrupted(t);
+        return;
+      }
+      if (verdict === "error") {
+        this.settle(t, "failed", { code: "EXECUTION_ERROR", message: "history confirms execution_error" });
+        return;
+      }
+      if (verdict === "success") {
+        await this.collect(t, history);
+        return;
+      }
+    }
+    const attempt = this.deps.store.getAttempt(t.job);
+    if (attempt?.success_observed_at) {
+      this.updateInFlight(t, "submission_unknown", { code: "RESULT_PENDING", message: "Execution succeeded; waiting for history/results. Generation will not be retried." });
+      return;
+    }
+    let queue;
+    try {
+      queue = await this.deps.client.http.getQueue();
+    } catch (error) {
+      if (this.active(t)) this.updateInFlight(t, undefined, { code: "RECONCILIATION_FAILED", message: `queue query failed: ${String(error).slice(0, 200)}` });
+      return;
+    }
+    if (!this.active(t)) return;
+    if (attempt?.cancel_requested_at) {
+      this.updateInFlight(t, "submission_unknown", { code: "TIMEOUT_UNCONFIRMED", message: "Local deadline exceeded; remote termination is unconfirmed. Window remains occupied; no automatic resubmission." });
+    } else if (queue.queue_running.some((q) => queueEntryPromptId(q) === t.job.prompt_id)) {
+      this.updateInFlight(t, "executing");
+    } else if (queue.queue_pending.some((q) => queueEntryPromptId(q) === t.job.prompt_id)) {
+      this.updateInFlight(t, "queued");
+    } else {
+      this.updateInFlight(t, "submission_unknown", { code: "SUBMISSION_UNKNOWN", message: "Successful history and queue queries found no terminal record or queued prompt. Retaining remote uncertainty; no resubmission." });
+    }
+  }
+
+  private async handleTimeout(t: Tracked): Promise<void> {
+    if (!this.active(t)) return;
+    const attempt = this.deps.store.getAttempt(t.job);
+    if (attempt?.success_observed_at || attempt?.cancel_requested_at) return;
+    // Persist the reason BEFORE either remote call; a crash cannot erase intent.
+    this.deps.store.transaction(() => {
+      this.deps.store.patchAttempt(t.job, { cancel_requested_at: new Date().toISOString() });
+      this.updateInFlight(t, "submission_unknown", { code: "TIMEOUT_UNCONFIRMED", message: "Local deadline exceeded; cancellation requested, remote outcome pending." });
+    });
+    const remote = { queue_delete: "skipped", interrupt: "skipped" };
+    t.cancelInFlight = true;
+    try {
+      await this.deps.client.http.deleteQueue([t.job.prompt_id!]);
+      remote.queue_delete = "ok";
+    } catch (error) {
+      remote.queue_delete = `error: ${String(error)}`.slice(0, 200);
+    }
+    if (!this.active(t)) return;
+    try {
+      await this.deps.client.http.interrupt(t.job.prompt_id!);
+      remote.interrupt = "ok";
+    } catch (error) {
+      remote.interrupt = `error: ${String(error)}`.slice(0, 200);
+    }
+    if (!this.active(t)) return;
+    this.updateInFlight(t, "submission_unknown", { code: "TIMEOUT_UNCONFIRMED", message: "Cancellation RPC completed; awaiting remote terminal evidence (HTTP 200 alone is insufficient).", remote_cancel: remote });
+    t.cancelInFlight = false;
+    if (t.sawInterrupted) {
+      this.settleInterrupted(t);
+      return;
+    }
+    await this.reconcile(t.job.id);
+  }
+
+  private settleInterrupted(t: Tracked): void {
+    if (t.cancelInFlight) {
+      t.sawInterrupted = true;
+      return;
+    }
+    const timeout = this.deps.store.getAttempt(t.job)?.cancel_requested_at;
+    this.settle(t, timeout ? "timeout" : "cancelled", {
+      code: timeout ? "TIMEOUT" : "INTERRUPTED",
+      message: timeout ? "Remote execution_interrupted confirmed after persisted local timeout cancellation." : "User/external interruption confirmed; never automatically retried."
     });
   }
 
-  /**
-   * 组合取消（docs/003 F5 语义）：queue delete 移除排队项；interrupt 终止执行项。
-   * 任务可能恰在两动作之间由 queued 转 executing，故两者都发——
-   * 各自对"错误状态"是已验证的无害 no-op（interrupt 不伤排队任务，delete 不影响执行中任务）。
-   */
-  private async cancelRemote(promptId: string): Promise<{ queue_delete: string; interrupt: string }> {
-    const out = { queue_delete: "skipped", interrupt: "skipped" };
-    try {
-      await this.deps.client.http.deleteQueue([promptId]);
-      out.queue_delete = "ok";
-    } catch (e) {
-      out.queue_delete = `error: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200);
-    }
-    try {
-      await this.deps.client.http.interrupt(promptId);
-      out.interrupt = "ok";
-    } catch (e) {
-      out.interrupt = `error: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200);
-    }
-    return out;
-  }
-
-  private async settleFromHistory(t: Tracked, entry?: Awaited<ReturnType<ComfyClient["http"]["getHistory"]>>): Promise<void> {
-    if (t.settled) return;
-    const promptId = t.job.prompt_id!;
-    const hist = entry ?? (await this.deps.client.http.getHistory(promptId).catch(() => null));
-    if (!hist) {
-      // 拿不到 history（理论罕见）：置 failed 并说明
-      this.settle(t, "failed", { code: "NO_HISTORY", message: "execution_success 后无法读取 history" });
-      return;
-    }
-    // 终态优先级守卫：execution_success 事件到达但 history 实际记录 error/interrupted
-    //（理论上不应发生，防御性保证 error 不被误判为成功）
-    const verdict = historyVerdict(hist);
-    if (verdict === "error") {
-      this.settle(t, "failed", { code: "EXECUTION_ERROR", message: "execution_success 后 history 记录为 error" });
-      return;
-    }
-    if (verdict === "interrupted") {
-      if (t.timeoutCancelInFlight) {
-        t.sawInterruptedDuringTimeoutCancel = true;
-        return; // 超时取消的效果：交给 handleTimeout 统一定 timeout
-      }
-      this.settle(t, "cancelled", { code: "INTERRUPTED", message: "execution_success 后 history 记录为 interrupted" });
-      return;
-    }
-    let outputs: JobOutputAsset[] = [];
-    let saveError: string | null = null;
+  private async collect(t: Tracked, history: HistoryEntry): Promise<void> {
+    this.deps.store.patchAttempt(t.job, { success_observed_at: new Date().toISOString() });
+    if (t.timeoutTimer) clearTimeout(t.timeoutTimer);
+    let outputs: JobOutputAsset[] = harvestOutputRefs(history).map((ref) => ({ ...ref, local_path: "", bytes: 0 }));
+    let error: JobError | undefined;
     if (this.deps.autoSave) {
       try {
-        outputs = await this.deps.assets.saveOutputs(t.job.batch_id, t.job.idx, hist);
-      } catch (e) {
-        saveError = `输出落盘失败: ${e instanceof Error ? e.message : String(e)}`;
+        outputs = await this.deps.assets.saveOutputs(t.job.batch_id, t.job.idx, history);
+      } catch (cause) {
+        error = { code: "SAVE_ERROR", message: `Output download failed; get_result retries download only: ${String(cause).slice(0, 200)}` };
       }
-    } else {
-      // 不落盘时记录引用（kind+filename，供 get_result 按需下载）
-      const { harvestOutputRefs } = await import("../assets/asset-manager.js");
-      outputs = harvestOutputRefs(hist).map((r) => ({ ...r, local_path: "", bytes: 0 }));
     }
-    this.settle(t, "succeeded", saveError ? { code: "SAVE_ERROR", message: saveError } : undefined, outputs);
+    if (this.active(t)) this.settle(t, "succeeded", error, outputs);
   }
 
-  private settle(
-    t: Tracked,
-    status: JobRow["status"],
-    error?: JobError,
-    outputs?: JobOutputAsset[]
-  ): void {
-    if (t.settled) return;
+  private updateInFlight(t: Tracked, status?: JobRow["status"], error?: JobError): void {
+    this.deps.store.transaction(() => {
+      if (!this.active(t)) return;
+      const current = this.deps.store.getJobById(t.job.id)!;
+      const previous = current.error_json ? JSON.parse(current.error_json) as JobError : null;
+      const errorJson = error ? JSON.stringify({ ...error, remote_cancel: previous?.remote_cancel ?? error.remote_cancel }) : current.error_json;
+      this.deps.store.patchJob(t.job.id, { status: status ?? current.status, error_json: errorJson });
+      this.deps.store.patchAttemptStatus(t.job.id, t.job.attempt_no, status ?? current.status, null);
+    });
+  }
+
+  private settle(t: Tracked, status: JobRow["status"], error?: JobError, outputs?: JobOutputAsset[]): void {
+    if (!this.active(t)) return;
+    const previous = this.deps.store.getJobById(t.job.id)!.error_json;
+    const remote = previous ? (JSON.parse(previous) as JobError).remote_cancel : undefined;
+    this.deps.store.settleAttempt(t.job, status, error ? { ...error, remote_cancel: remote } : undefined, outputs);
+    this.release(t);
+  }
+
+  private release(t: Tracked): void {
     t.settled = true;
     t.unsubscribe();
     if (t.pollTimer) clearInterval(t.pollTimer);
     if (t.timeoutTimer) clearTimeout(t.timeoutTimer);
     this.tracked.delete(t.job.id);
-    this.deps.store.patchJob(t.job.id, {
-      status,
-      error_json: error ? JSON.stringify(error) : t.job.error_json,
-      outputs_json: outputs ? JSON.stringify(outputs) : undefined,
-      finished_at: new Date().toISOString()
-    });
-    // attempt 终态回写（t.job 快照的 attempt_no 即本次跟踪的尝试）
-    this.deps.store.patchAttemptStatus(t.job.id, t.job.attempt_no, status, new Date().toISOString());
-    const { status: batchStatus, finished } = this.deps.store.recomputeBatchStatus(t.job.batch_id);
-    this.deps.store.updateBatchStatus(t.job.batch_id, batchStatus, finished ? new Date().toISOString() : null);
   }
 }

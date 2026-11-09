@@ -12,7 +12,7 @@ import type Database from "better-sqlite3";
  * paused 语义（Task 005 / P4.1 工作流版本保护）：
  *   batch 创建后工作流内容指纹漂移 → 该 batch 剩余 pending job 暂停
  *   （WORKFLOW_VERSION_MISMATCH）；不占在途窗口；指纹恢复一致后由调度器解除。
- * 中断终态语义（P4.1 统一）：用户/外部中断 → cancelled；执行超时 → timeout
+ * 中断终态语义（P4.1 统一）：用户/外部中断 → cancelled；超时且远端确认中断 → timeout
  * （保留远端取消结果）；ComfyUI 执行失败 → failed；提交结果不确定 → submission_unknown。
  */
 
@@ -65,11 +65,11 @@ export interface BatchRow {
   options_json: string;
   created_at: string;
   finished_at: string | null;
-  /** batch 创建时的工作流 manifest 内容指纹（v3 前旧行为 NULL = 不校验） */
+  /** batch 创建时的工作流 manifest 内容指纹（旧行为 NULL = 缺少历史快照，暂停未执行任务） */
   manifest_fingerprint: string | null;
-  /** batch 创建时的工作流图内容指纹（v3 前旧行为 NULL = 不校验） */
+  /** batch 创建时的工作流图内容指纹（旧行为 NULL = 缺少历史快照，暂停未执行任务） */
   graph_fingerprint: string | null;
-  /** 批量请求内容指纹（幂等重放比对；v3 前旧行为 NULL = 不比对） */
+  /** 批量请求内容指纹（幂等重放比对；旧行为 NULL = 显式 legacy 冲突） */
   request_fingerprint: string | null;
 }
 
@@ -88,6 +88,19 @@ export interface JobError {
   node_errors?: unknown;
   /** 超时取消的远端动作结果（queued→queue delete / executing→interrupt） */
   remote_cancel?: { queue_delete: string; interrupt: string };
+}
+
+export interface AttemptRow {
+  attempt_no: number;
+  prompt_id: string | null;
+  status: string;
+  submitted_at: string | null;
+  deadline_at: string | null;
+  cancel_requested_at: string | null;
+  success_observed_at: string | null;
+  terminal_confirmed: number;
+  error_json: string | null;
+  finished_at: string | null;
 }
 
 /** 批量执行选项（batches.options_json） */
@@ -195,10 +208,42 @@ export class BatchStore {
       .run({ submitted_at: null, ...a } as Record<string, unknown>);
   }
 
-  getAttempts(jobId: string): Array<{ attempt_no: number; prompt_id: string | null; status: string; submitted_at: string | null }> {
+  getAttempts(jobId: string): AttemptRow[] {
     return this.db
-      .prepare("SELECT attempt_no, prompt_id, status, submitted_at FROM job_attempts WHERE job_id = ? ORDER BY attempt_no")
-      .all(jobId) as Array<{ attempt_no: number; prompt_id: string | null; status: string; submitted_at: string | null }>;
+      .prepare("SELECT * FROM job_attempts WHERE job_id = ? ORDER BY attempt_no")
+      .all(jobId) as AttemptRow[];
+  }
+
+  getAttempt(job: JobRow): AttemptRow | undefined {
+    return this.db.prepare("SELECT * FROM job_attempts WHERE job_id = ? AND attempt_no = ?")
+      .get(job.id, job.attempt_no) as AttemptRow | undefined;
+  }
+
+  patchAttempt(job: JobRow, patch: Partial<Pick<AttemptRow, "deadline_at" | "cancel_requested_at" | "success_observed_at">>): void {
+    const keys = Object.keys(patch);
+    this.db.prepare(`UPDATE job_attempts SET ${keys.map((k) => `${k} = @${k}`).join(", ")} WHERE job_id = @id AND attempt_no = @attempt_no`)
+      .run({ ...patch, id: job.id, attempt_no: job.attempt_no });
+  }
+
+  /** Ignore stale async callbacks, and commit job/attempt/batch together. */
+  settleAttempt(job: JobRow, status: JobStatus, error?: JobError, outputs?: JobOutputAsset[]): boolean {
+    return this.transaction(() => {
+      const current = this.getJobById(job.id)!;
+      if (current.attempt_no !== job.attempt_no || current.prompt_id !== job.prompt_id || !IN_FLIGHT_STATUSES.includes(current.status)) return false;
+      const now = new Date().toISOString();
+      const errorJson = error ? JSON.stringify(error) : null;
+      this.patchJob(job.id, { status, error_json: errorJson, outputs_json: outputs ? JSON.stringify(outputs) : current.outputs_json, finished_at: now });
+      this.db.prepare("UPDATE job_attempts SET status = ?, error_json = ?, finished_at = ?, terminal_confirmed = 1 WHERE job_id = ? AND attempt_no = ?")
+        .run(status, errorJson, now, job.id, job.attempt_no);
+      const batch = this.recomputeBatchStatus(job.batch_id);
+      this.updateBatchStatus(job.batch_id, batch.status, batch.finished ? now : null);
+      return true;
+    });
+  }
+
+  retryEligibility(job: JobRow, opts: BatchOptions): boolean {
+    return (job.status === "failed" || job.status === "timeout") && job.attempt_no < opts.max_attempts &&
+      this.getAttempt(job)?.terminal_confirmed === 1;
   }
 
   /** 服务端回显了不同 prompt_id 时同步 attempt 行（历史记录以实际生效 id 为准） */
@@ -209,7 +254,7 @@ export class BatchStore {
   }
 
   /** attempt 终态回写（job 定终态时同步该次尝试的 status/finished_at，审计历史完整） */
-  patchAttemptStatus(jobId: string, attemptNo: number, status: string, finishedAt: string): void {
+  patchAttemptStatus(jobId: string, attemptNo: number, status: string, finishedAt: string | null): void {
     this.db
       .prepare("UPDATE job_attempts SET status = ?, finished_at = ? WHERE job_id = ? AND attempt_no = ?")
       .run(status, finishedAt, jobId, attemptNo);
@@ -225,7 +270,8 @@ export class BatchStore {
     jobId: string,
     promptId: string,
     resolvedJson: string,
-    submittedAt: string
+    submittedAt: string,
+    timeoutMs = 600_000
   ): { attemptNo: number } | null {
     return this.transaction(() => {
       const job = this.getJobById(jobId);
@@ -247,6 +293,7 @@ export class BatchStore {
         status: "submitting",
         submitted_at: submittedAt
       });
+      this.patchAttempt(this.getJobById(jobId)!, { deadline_at: new Date(Date.parse(submittedAt) + timeoutMs).toISOString() });
       return { attemptNo };
     });
   }
@@ -286,7 +333,7 @@ export class BatchStore {
       ? `SELECT j.*, b.workflow AS batch_workflow, b.workflow_version AS batch_wv,
                 b.manifest_fingerprint AS batch_mfp, b.graph_fingerprint AS batch_gfp
          FROM jobs j JOIN batches b ON j.batch_id = b.id
-         WHERE j.status = 'pending' AND j.batch_id NOT IN (${Array.from(exclude, () => "?").join(",")})
+         WHERE j.status = 'pending' AND (j.attempt_no > 0 OR j.batch_id NOT IN (${Array.from(exclude, () => "?").join(",")}))
          ORDER BY b.rowid, j.idx LIMIT 1`
       : `SELECT j.*, b.workflow AS batch_workflow, b.workflow_version AS batch_wv,
                 b.manifest_fingerprint AS batch_mfp, b.graph_fingerprint AS batch_gfp
@@ -317,7 +364,7 @@ export class BatchStore {
       .all() as Array<JobRow & { batch_options: string }>;
     return rows.filter((r) => {
       const opts = parseBatchOptions(r.batch_options);
-      return r.attempt_no < opts.max_attempts;
+      return this.retryEligibility(r, opts);
     });
   }
 
@@ -325,16 +372,16 @@ export class BatchStore {
   batchesNeedingAbort(): string[] {
     const rows = this.db
       .prepare(
-        `SELECT b.id AS batch_id, b.options_json, j.status AS job_status, j.attempt_no
+        `SELECT j.*, b.id AS batch_id, b.options_json
          FROM batches b JOIN jobs j ON j.batch_id = b.id
          WHERE b.status = 'running' AND j.status IN ('failed','timeout','invalid')`
       )
-      .all() as Array<{ batch_id: string; options_json: string; job_status: string; attempt_no: number }>;
+      .all() as Array<JobRow & { options_json: string }>;
     const terminalByBatch = new Map<string, boolean>();
     for (const r of rows) {
       const opts = parseBatchOptions(r.options_json);
-      // invalid 无重试概念恒终态；failed/timeout 须 attempt_no >= max_attempts 才是终态失败
-      const terminal = r.job_status === "invalid" || r.attempt_no >= opts.max_attempts;
+      // 候选、batch 收敛与级联共用同一安全重试判定。
+      const terminal = !this.retryEligibility(r, opts);
       terminalByBatch.set(r.batch_id, (terminalByBatch.get(r.batch_id) ?? false) || terminal);
     }
     return [...terminalByBatch]
@@ -368,7 +415,7 @@ export class BatchStore {
       )
       .run(
         JSON.stringify({
-          code: "WORKFLOW_VERSION_MISMATCH",
+          code: mismatchDetail.includes("LEGACY_SNAPSHOT_MISSING") ? "LEGACY_SNAPSHOT_MISSING" : "WORKFLOW_VERSION_MISMATCH",
           message: mismatchDetail
         }),
         batchId
@@ -377,22 +424,25 @@ export class BatchStore {
 
   /**
    * 暂缓提交的 batch（P4.1 §二.5 组合语义）：continue_on_error=false 且存在
-   * 【重试未决】失败（failed/timeout 且 attempt_no < max_attempts）的 batch。
+   * 【重试未决】失败或已进入 pending/queued/executing 的重试 attempt。
    * 该 batch 的其余 pending 暂不提交——等重试定局（成功 → 继续跑；用尽 → 级联取消），
    * 避免注定可能放弃的 batch 继续消耗生成。
    */
   heldPendingBatches(): Set<string> {
     const rows = this.db
       .prepare(
-        `SELECT b.id AS batch_id, b.options_json, j.attempt_no
+        `SELECT j.*, b.options_json
          FROM batches b JOIN jobs j ON j.batch_id = b.id
-         WHERE b.status = 'running' AND j.status IN ('failed','timeout')`
+         WHERE b.status = 'running' AND ((j.status = 'pending' AND j.attempt_no > 0)
+           OR (j.attempt_no > 1 AND j.status IN ('submitting','submission_unknown','queued','executing'))
+           OR j.status IN ('failed','timeout'))`
       )
-      .all() as Array<{ batch_id: string; options_json: string; attempt_no: number }>;
+      .all() as Array<JobRow & { options_json: string }>;
     const held = new Set<string>();
     for (const r of rows) {
       const opts = parseBatchOptions(r.options_json);
-      if (!opts.continue_on_error && r.attempt_no < opts.max_attempts) held.add(r.batch_id);
+      const retrying = r.status !== "failed" && r.status !== "timeout";
+      if (!opts.continue_on_error && (retrying || this.retryEligibility(r, opts))) held.add(r.batch_id);
     }
     return held;
   }
@@ -460,7 +510,7 @@ export class BatchStore {
   /**
    * 由 jobs 推导 batch 状态（全部终态才收敛）。
    * - submission_unknown 计入"未决"（可能仍在执行）→ batch 保持 running，不得伪装成 failed。
-   * - failed/timeout 但重试次数未用尽（attempt_no < max_attempts）也计入未决
+   * - failed/timeout 且 retryEligibility=true（远端已确认、次数未用尽）计入未决
    *   （Scheduler 下一 tick 会重置为 pending 再提交）。
    * - paused（工作流版本漂移挂起）计入未决 → batch 保持 running，等指纹恢复或人工处理。
    */
@@ -468,18 +518,18 @@ export class BatchStore {
     const batch = this.getBatch(batchId);
     const opts = batch ? parseBatchOptions(batch.options_json) : { continue_on_error: true, max_attempts: 1 };
     const rows = this.db
-      .prepare("SELECT status, attempt_no FROM jobs WHERE batch_id = ?")
-      .all(batchId) as Array<{ status: JobStatus; attempt_no: number }>;
+      .prepare("SELECT * FROM jobs WHERE batch_id = ?")
+      .all(batchId) as JobRow[];
     const total = rows.length;
     if (total === 0) return { status: "running", finished: false };
     const succeeded = rows.filter((r) => r.status === "succeeded").length;
     const retryPending = rows.filter(
-      (r) => (r.status === "failed" || r.status === "timeout") && r.attempt_no < opts.max_attempts
+      (r) => this.retryEligibility(r, opts)
     ).length;
     const failures = rows.filter(
       (r) =>
         (r.status === "failed" || r.status === "timeout" || r.status === "invalid" || r.status === "cancelled") &&
-        !((r.status === "failed" || r.status === "timeout") && r.attempt_no < opts.max_attempts)
+        !this.retryEligibility(r, opts)
     ).length;
     const unresolved = total - succeeded - failures - retryPending; // pending/submitting/submission_unknown/queued/executing/paused
     if (unresolved > 0 || retryPending > 0) return { status: "running", finished: false };

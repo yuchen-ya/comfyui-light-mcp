@@ -110,7 +110,7 @@ describe.skipIf(!reachable)("真实 ComfyUI 文生图端到端", () => {
 
         console.error(`[e2e] ComfyUI ${comfyuiVersion} → ${img.local_path}`);
       } finally {
-        engine.stop();
+        await engine.stop();
         client.stop();
         db.close();
       }

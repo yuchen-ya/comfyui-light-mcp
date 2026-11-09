@@ -33,18 +33,8 @@ async function main(): Promise<void> {
     console.error(`[comfyui] 初始连接失败（稍后可重试工具调用）: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  if (connected) {
-    try {
-      const rec = await engine.recover();
-      if (rec.resolved + rec.requeued + rec.keptUnknown + rec.requeuedAsExecuting > 0) {
-        console.error(`[recovery] resolved=${rec.resolved} requeued=${rec.requeued} executing=${rec.requeuedAsExecuting} keptUnknown=${rec.keptUnknown}`);
-      }
-    } catch (e) {
-      console.error(`[recovery] 恢复失败（下次重启再试）: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
-  // 调度器常驻：恢复出的 queued/executing 已交还 tracker，pending（含重启前未跑完的批量）由此续跑
+  // Engine's scheduler reconciles every connection epoch before allowing submissions,
+  // including a delayed first connection after client.start() times out.
   engine.start();
 
   const server = createMcpServer(engine);

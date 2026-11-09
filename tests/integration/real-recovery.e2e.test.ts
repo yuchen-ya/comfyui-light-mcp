@@ -93,7 +93,7 @@ describe.skipIf(!reachable)("真实 ComfyUI：恢复 + 工作流版本保护 + �
         }
       };
       await waitStatus((s) => s["succeeded"]! >= 1 && s["running"]! + s["queued"]! >= 1, 300_000); // job0 完成 + job1 已在途
-      ctx.engine.stop();
+      await ctx.engine.stop();
       ctx.client.stop();
       ctx.db.close(); // 崩溃：进程内对象全部销毁
 
@@ -121,7 +121,7 @@ describe.skipIf(!reachable)("真实 ComfyUI：恢复 + 工作流版本保护 + �
         (s) => s["succeeded"]! + s["failed"]! + s["paused"]! >= 3 && s["running"]! + s["queued"]! === 0,
         300_000
       );
-      ctx.engine.stop();
+      await ctx.engine.stop();
       ctx.client.stop();
       ctx.db.close();
 
@@ -159,7 +159,7 @@ describe.skipIf(!reachable)("真实 ComfyUI：恢复 + 工作流版本保护 + �
       expect(reused.batch_id).toBe(handle.batch_id);
       expect(ctx.engine.store.countJobs(handle.batch_id)).toBe(3); // 无新增
 
-      ctx.engine.stop();
+      await ctx.engine.stop();
       ctx.client.stop();
       ctx.db.close();
     }

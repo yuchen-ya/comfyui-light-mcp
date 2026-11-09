@@ -140,11 +140,11 @@ describe("fingerprintMismatch 判定", () => {
       { version: 1, ...wf.fingerprints }
     )).toContain("工作流图指纹");
   });
-  it("旧行（两指纹均 NULL）→ 跳过校验（null）", () => {
+  it("旧行（两指纹均 NULL）→ 明确缺少快照", () => {
     expect(fingerprintMismatch(
       { workflowVersion: 9, manifestFingerprint: null, graphFingerprint: null },
       { version: 1, manifestFingerprint: "x", graphFingerprint: "y" }
-    )).toBeNull();
+    )).toContain("LEGACY_SNAPSHOT_MISSING");
   });
 });
 
@@ -266,7 +266,7 @@ describe("恢复时验证", () => {
     ctx.db.close();
   });
 
-  it("旧行（指纹 NULL）→ 恢复/提交都不因缺指纹阻断（尽力兼容）", async () => {
+  it("旧行（指纹 NULL）→ 恢复/提交均暂停，零 POST", async () => {
     const wfV1 = makeWf();
     const ctx = makeCtx(wfV1);
     const res = ctx.manager.createBatch(wfV1, { runs: [run("a"), run("b")] });
@@ -274,7 +274,7 @@ describe("恢复时验证", () => {
     (ctx.store as unknown as { db: { prepare: (s: string) => { run: (id: string) => unknown } } })
       .db.prepare("UPDATE batches SET manifest_fingerprint = NULL, graph_fingerprint = NULL WHERE id = ?")
       .run(res.batchId);
-    // 恢复时也不因缺指纹暂停（工作流已换成 v2 也一样放行）
+    // 历史图无法证明相同；即使有当前工作流，也必须暂停。
     ctx.registry.current = makeWf({ version: 2, graphFingerprint: "fp-graph-v2" });
     const report = await recoverInFlight({
       client: ctx.client,
@@ -284,14 +284,11 @@ describe("恢复时验证", () => {
       autoSave: true,
       registry: ctx.registry as unknown as WorkflowRegistry
     });
-    expect(report.pausedOnVersionMismatch).toBe(0);
-    // 提交照常：a → 完成后 b 续跑（窗口 1）
+    expect(report.pausedOnVersionMismatch).toBe(2);
     await ctx.scheduler.tick();
-    const a = ctx.store.getJob(res.batchId, 0)!;
-    expect(a.status).toBe("queued");
-    await succeed(ctx.store, ctx.fake, a);
-    await ctx.scheduler.tick();
-    expect(ctx.store.getJob(res.batchId, 1)!.status).toBe("queued");
+    expect(ctx.store.getJob(res.batchId, 0)!.status).toBe("paused");
+    expect(ctx.store.getJob(res.batchId, 1)!.status).toBe("paused");
+    expect(ctx.fake.submitCalls).toBe(0);
     ctx.tracker.disposeAll();
     ctx.db.close();
   });

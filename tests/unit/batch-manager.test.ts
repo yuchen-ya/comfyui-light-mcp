@@ -210,7 +210,9 @@ describe("getBatchView：统计 / 分页 / 过滤 / 有界", () => {
   it("重试未用尽的 failed 不收敛 batch（attempt_no < max_attempts 视为未决）", () => {
     const res = manager.createBatch(wf, { runs: [okRun(0), okRun(1)], maxAttempts: 3 });
     store.patchJob(store.getJob(res.batchId, 0)!.id, { status: "succeeded" });
-    store.patchJob(store.getJob(res.batchId, 1)!.id, { status: "failed", attempt_no: 1 });
+    const job = store.getJob(res.batchId, 1)!;
+    store.claimForSubmit(job.id, "confirmed-failure", "{}", new Date().toISOString());
+    store.settleAttempt(store.getJobById(job.id)!, "failed", { code: "EXECUTION_ERROR", message: "confirmed remote failure" });
     expect(store.recomputeBatchStatus(res.batchId)).toEqual({ status: "running", finished: false });
     // 次数用尽 → 收敛 failed
     store.patchJob(store.getJob(res.batchId, 1)!.id, { attempt_no: 3 });

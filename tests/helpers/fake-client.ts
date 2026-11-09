@@ -86,6 +86,7 @@ export function historyEntry(outputs: Record<string, unknown>, statusStr = "succ
   return {
     prompt: [],
     outputs: outputs as HistoryEntry["outputs"],
-    status: { status_str: statusStr, completed: statusStr === "success", messages: [] }
+    status: { status_str: statusStr === "interrupted" ? "error" : statusStr, completed: statusStr === "success",
+      messages: statusStr === "interrupted" ? [["execution_interrupted", { prompt_id: "fixture-prompt", node_id: "7" }]] : [] }
   };
 }

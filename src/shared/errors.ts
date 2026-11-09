@@ -4,6 +4,7 @@
  */
 
 export type ErrorCode =
+  | "LEGACY_IDEMPOTENCY_CONFLICT"
   | "CONFIG_ERROR"
   | "COMFY_UNREACHABLE"
   | "COMFY_HTTP_ERROR"

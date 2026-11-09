@@ -365,7 +365,7 @@ describe("tick 防重与恢复", () => {
     const scheduler2 = new Scheduler({ store, registry: registryLike, runner: runner2, maxInFlight: 1, maxQueuedJobs: 1 });
 
     // 恢复：a 仍在队列 → 重新跟踪（不重提）；随后完成 a，b 由新调度器续跑
-    const report = await recoverInFlight({ client: ctx.client, store, assets, tracker: tracker2, autoSave: true });
+    const report = await recoverInFlight({ client: ctx.client, store, assets, tracker: tracker2, autoSave: true, registry: registryLike });
     expect(report.requeued).toBe(1);
     await succeed(store, ctx.fake, store.getJob(res.batchId, 0)!);
     await scheduler2.tick();

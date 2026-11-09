@@ -78,7 +78,7 @@ CREATE INDEX idx_jobs_retryable ON jobs(batch_id, idx) WHERE status IN ('failed'
     // - manifest_fingerprint / graph_fingerprint：batch 创建时的工作流内容快照
     //   （提交/恢复时比对，漂移 → 暂停该 batch 剩余 pending job，不静默用新版本续跑）。
     // - request_fingerprint：批量请求内容指纹（同 idempotency_key 重放时比对，
-    //   内容不同 → IDEMPOTENCY_CONFLICT）。旧行为 NULL = 无法比对（尽力兼容）。
+    //   内容不同 → IDEMPOTENCY_CONFLICT）。旧行为 NULL = 无法比对（v4 采用保守暂停/显式冲突策略）。
     // job 级不复制 workflow JSON —— 指纹在 batch 行，一处存储。
     version: 3,
     sql: `
@@ -93,16 +93,56 @@ export function openDb(file: string | ":memory:"): Database.Database {
   const db = new Database(file);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  migrate(db);
+  try {
+    migrate(db);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   return db;
 }
 
 /** 顺序执行未应用的迁移，user_version 记录进度（幂等） */
 export function migrate(db: Database.Database): void {
   const current = db.pragma("user_version", { simple: true }) as number;
-  for (const m of MIGRATIONS) {
-    if (m.version <= current) continue;
-    db.exec(m.sql);
-    db.pragma(`user_version = ${m.version}`);
-  }
+  if (current > 4) throw new Error(`Unsupported database schema v${current}; preserve the database and use a compatible application version.`);
+  db.transaction(() => {
+    for (const m of MIGRATIONS) {
+      if (m.version <= current) continue;
+      db.exec(m.sql);
+      db.pragma(`user_version = ${m.version}`);
+    }
+    if (current < 4) {
+      // Experimental 4.1 used raw-text hashes in short columns. Keep those columns
+      // for audit, but never reinterpret their values as canonical fingerprints.
+      const cols = new Set((db.prepare("PRAGMA table_info(batches)").all() as Array<{ name: string }>).map((c) => c.name));
+      for (const name of ["manifest_fingerprint", "graph_fingerprint", "request_fingerprint"]) {
+        if (!cols.has(name)) db.exec(`ALTER TABLE batches ADD COLUMN ${name} TEXT`);
+      }
+      db.exec(`
+ALTER TABLE job_attempts ADD COLUMN deadline_at TEXT;
+ALTER TABLE job_attempts ADD COLUMN cancel_requested_at TEXT;
+ALTER TABLE job_attempts ADD COLUMN success_observed_at TEXT;
+ALTER TABLE job_attempts ADD COLUMN terminal_confirmed INTEGER NOT NULL DEFAULT 0;
+UPDATE job_attempts SET cancel_requested_at = COALESCE(finished_at, submitted_at, CURRENT_TIMESTAMP)
+WHERE job_id IN (SELECT j.id FROM jobs j JOIN batches b ON b.id = j.batch_id
+  WHERE b.status = 'running' AND j.status = 'timeout') AND attempt_no = (SELECT attempt_no FROM jobs WHERE id = job_id);
+UPDATE job_attempts SET success_observed_at = COALESCE(finished_at, submitted_at, CURRENT_TIMESTAMP)
+WHERE job_id IN (SELECT j.id FROM jobs j JOIN batches b ON b.id = j.batch_id
+  WHERE b.status = 'running' AND json_extract(j.error_json, '$.code') = 'NO_HISTORY') AND attempt_no = (SELECT attempt_no FROM jobs WHERE id = job_id);
+UPDATE jobs SET status = 'submission_unknown', finished_at = NULL,
+  error_json = '{"code":"LEGACY_TERMINAL_UNVERIFIED","message":"Legacy terminal outcome has no remote confirmation; reconciliation required before retry."}'
+WHERE status IN ('failed','timeout') AND prompt_id IS NOT NULL AND batch_id IN (SELECT id FROM batches WHERE status = 'running');
+UPDATE job_attempts SET status = 'submission_unknown', finished_at = NULL,
+  error_json = (SELECT error_json FROM jobs WHERE id = job_attempts.job_id)
+WHERE EXISTS (SELECT 1 FROM jobs j WHERE j.id = job_attempts.job_id AND j.attempt_no = job_attempts.attempt_no
+  AND j.status = 'submission_unknown' AND json_extract(j.error_json, '$.code') = 'LEGACY_TERMINAL_UNVERIFIED');
+UPDATE jobs SET status = 'paused', error_json = '{"code":"LEGACY_SNAPSHOT_MISSING","message":"Historical workflow snapshot unavailable; pending work requires review and will not resume automatically."}'
+WHERE status = 'pending' AND batch_id IN (
+  SELECT id FROM batches WHERE manifest_fingerprint IS NULL OR graph_fingerprint IS NULL
+);
+`);
+      db.pragma("user_version = 4");
+    }
+  })();
 }
