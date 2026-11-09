@@ -43,7 +43,8 @@ const wf: RegisteredWorkflow = {
     "7": { class_type: "KSampler", inputs: { seed: 42 } },
     "9": { class_type: "SaveImage", inputs: { images: ["8", 0] } }
   },
-  sourceFile: "t.manifest.json"
+  sourceFile: "t.manifest.json",
+  fingerprints: { manifestFingerprint: "fp-manifest-t", graphFingerprint: "fp-graph-t" }
 };
 
 const registryLike = { get: (name: string) => (name === "t" ? wf : undefined) } as unknown as WorkflowRegistry;
@@ -215,7 +216,7 @@ describe("失败隔离与重试", () => {
     const res = ctx.manager.createBatch(wf, { runs: [run("a"), run("poison"), run("c"), run("d")] });
     await drain(ctx, res.batchId);
     const view = ctx.manager.getBatchView(res.batchId);
-    expect(view.stats).toEqual({ total: 4, succeeded: 3, failed: 1, running: 0, queued: 0, pending: 0, invalid: 0, unknown: 0 });
+    expect(view.stats).toEqual({ total: 4, succeeded: 3, failed: 1, running: 0, queued: 0, pending: 0, invalid: 0, unknown: 0, paused: 0 });
     expect(view.status).toBe("partial");
     const poison = view.jobs.find((j) => j.index === 1)!;
     expect(poison.status).toBe("failed");
@@ -364,7 +365,7 @@ describe("tick 防重与恢复", () => {
     const scheduler2 = new Scheduler({ store, registry: registryLike, runner: runner2, maxInFlight: 1, maxQueuedJobs: 1 });
 
     // 恢复：a 仍在队列 → 重新跟踪（不重提）；随后完成 a，b 由新调度器续跑
-    const report = await recoverInFlight({ client: ctx.client, store, assets, tracker: tracker2, autoSave: true });
+    const report = await recoverInFlight({ client: ctx.client, store, assets, tracker: tracker2, autoSave: true, registry: registryLike });
     expect(report.requeued).toBe(1);
     await succeed(store, ctx.fake, store.getJob(res.batchId, 0)!);
     await scheduler2.tick();

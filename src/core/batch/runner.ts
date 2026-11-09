@@ -105,7 +105,7 @@ export class JobRunner {
     const now = new Date().toISOString();
 
     // ④ 条件占位 + 事务落库（prompt_id 已持久化后才有资格 POST）
-    const claim = this.deps.store.claimForSubmit(job.id, promptId, JSON.stringify(resolved), now);
+    const claim = this.deps.store.claimForSubmit(job.id, promptId, JSON.stringify(resolved), now, this.deps.tracker.timeoutMs);
     if (!claim) return null;
 
     // ⑤ 提交
@@ -125,7 +125,7 @@ export class JobRunner {
           message: `提交结果未知（已持久化 prompt_id=${promptId}，不会自动重提）。原因: ${message}`
         } satisfies JobError)
       });
-      this.deps.store.patchAttemptStatus(job.id, claim.attemptNo, "submission_unknown", new Date().toISOString());
+      this.deps.store.patchAttemptStatus(job.id, claim.attemptNo, "submission_unknown", null);
       this.finishBatch(job.batch_id);
       return { batchId: job.batch_id, index: job.idx, status: "submission_unknown" };
     }
@@ -145,20 +145,14 @@ export class JobRunner {
         message: `ComfyUI 拒绝提交（HTTP ${accepted.httpStatus}, ${errType}）${brief ? `: ${brief}` : ""}`,
         node_errors: normalized
       };
-      this.deps.store.patchJob(job.id, {
-        status: "failed",
-        error_json: JSON.stringify(err),
-        finished_at: new Date().toISOString()
-      });
-      this.deps.store.patchAttemptStatus(job.id, claim.attemptNo, "failed", new Date().toISOString());
-      this.finishBatch(job.batch_id);
+      this.deps.store.settleAttempt(this.deps.store.getJobById(job.id)!, "failed", err);
       return { batchId: job.batch_id, index: job.idx, status: "failed" };
     }
 
     // 服务端回显校验：若 ComfyUI 忽略客户端 id 而自派新 id，以回显为准并回写（保语义正确）
     const effectivePromptId = accepted.promptId || promptId;
     this.deps.store.patchJob(job.id, { status: "queued", prompt_id: effectivePromptId });
-    this.deps.store.patchAttemptStatus(job.id, claim.attemptNo, "queued", new Date().toISOString());
+    this.deps.store.patchAttemptStatus(job.id, claim.attemptNo, "queued", null);
     if (effectivePromptId !== promptId) {
       this.deps.store.patchAttemptPrompt(job.id, claim.attemptNo, effectivePromptId);
     }
@@ -186,7 +180,10 @@ export class JobRunner {
         total: 1,
         options_json: JSON.stringify({ continue_on_error: true, max_attempts: 1 }),
         created_at: now,
-        finished_at: null
+        finished_at: null,
+        manifest_fingerprint: wf.fingerprints.manifestFingerprint,
+        graph_fingerprint: wf.fingerprints.graphFingerprint,
+        request_fingerprint: null // 内部便捷路径，不参与幂等
       },
       [
         {

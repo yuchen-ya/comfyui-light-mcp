@@ -36,7 +36,7 @@ async function withMcp(fn: (args: {
   } finally {
     await client.close();
     await server.close();
-    engine.stop();
+    await engine.stop();
     db.close();
   }
 }

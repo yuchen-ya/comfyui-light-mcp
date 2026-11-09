@@ -58,7 +58,8 @@ function makeWf(): RegisteredWorkflow {
       "7": { class_type: "KSampler", inputs: { seed: 42, steps: 20 } },
       "9": { class_type: "SaveImage", inputs: { images: ["8", 0] } }
     },
-    sourceFile: "t.manifest.json"
+    sourceFile: "t.manifest.json",
+    fingerprints: { manifestFingerprint: "fp-manifest-t", graphFingerprint: "fp-graph-t" }
   };
 }
 
@@ -93,7 +94,7 @@ describe("① History 终态优先级", () => {
     expect(historyVerdict(historyEntry(partialOutputs, "interrupted"))).toBe("interrupted");
     expect(historyVerdict(historyEntry(partialOutputs, "success"))).toBe("success");
     expect(historyVerdict({ outputs: {} })).toBeNull(); // 无状态无输出 → 未定
-    expect(historyVerdict({ outputs: partialOutputs })).toBe("success"); // 无显式状态但有输出
+    expect(historyVerdict({ outputs: partialOutputs })).toBeNull(); // 部分输出不能证明成功
   });
 
   it("tracker：execution_success 事件到达但 history 实为 error → failed（防御守卫）", async () => {
@@ -128,19 +129,19 @@ describe("① History 终态优先级", () => {
 });
 
 describe("② 超时取消组合", () => {
-  it("超时 → queue delete + interrupt 双动作、timeout 终态、remote_cancel 记录", async () => {
+  it("超时 → queue delete + interrupt 双动作、未确认时保持 unknown、remote_cancel 记录", async () => {
     const { store, fake, runner, tracker } = setup({ timeoutMs: 80 });
     const handle = await runner.submitSingle(makeWf(), { prompt: "hi" });
     const job = store.getJob(handle.batchId, 0)!;
     fake.queuePromptIds.pending.push(job.prompt_id!); // 模拟仍在排队
-    await eventually(() => store.getJob(handle.batchId, 0)!.status === "timeout");
+    await eventually(() => store.getJob(handle.batchId, 0)!.status === "submission_unknown");
     expect(fake.deleteQueueCalls).toEqual([[job.prompt_id!]]); // queued → queue delete
     expect(fake.interruptCalls).toEqual([job.prompt_id!]); // executing → interrupt（组合防竞态）
     const err = JSON.parse(store.getJob(handle.batchId, 0)!.error_json!) as {
       code: string;
       remote_cancel: { queue_delete: string; interrupt: string };
     };
-    expect(err.code).toBe("TIMEOUT");
+    expect(err.code).toBe("TIMEOUT_UNCONFIRMED");
     expect(err.remote_cancel).toEqual({ queue_delete: "ok", interrupt: "ok" }); // 远端取消结果落库
     tracker.disposeAll();
   });
@@ -159,7 +160,7 @@ describe("② 超时取消组合", () => {
     tracker.disposeAll();
   });
 
-  it("远端取消请求失败 → 仍判 timeout，失败明细记入 remote_cancel", async () => {
+  it("远端取消请求失败 → 保持 unknown，失败明细记入 remote_cancel", async () => {
     const { store, fake, runner, tracker } = setup({ timeoutMs: 60 });
     const handle = await runner.submitSingle(makeWf(), { prompt: "hi" });
     fake.deleteQueueImpl = async () => {
@@ -168,7 +169,7 @@ describe("② 超时取消组合", () => {
     fake.interruptImpl = async () => {
       throw new Error("conn refused");
     };
-    await eventually(() => store.getJob(handle.batchId, 0)!.status === "timeout");
+    await eventually(() => store.getJob(handle.batchId, 0)!.status === "submission_unknown");
     const err = JSON.parse(store.getJob(handle.batchId, 0)!.error_json!) as {
       remote_cancel: { queue_delete: string; interrupt: string };
     };
@@ -231,7 +232,7 @@ describe("③ AUTO_SAVE_OUTPUTS=false 按需下载", () => {
       const persisted = JSON.parse(engine.store.getJob(batchId, 0)!.outputs_json!) as Array<{ local_path: string }>;
       expect(persisted[0]!.local_path).toBeTruthy();
     } finally {
-      engine.stop();
+      await engine.stop();
       db.close();
     }
   });
@@ -247,7 +248,7 @@ describe("③ AUTO_SAVE_OUTPUTS=false 按需下载", () => {
       expect(outs[0]!.local_path).toBe("");
       expect(fake.downloadCalls).toBe(downloads0);
     } finally {
-      engine.stop();
+      await engine.stop();
       db.close();
     }
   });
@@ -263,7 +264,7 @@ describe("③ AUTO_SAVE_OUTPUTS=false 按需下载", () => {
       expect(path.isAbsolute(outs[0]!.local_path)).toBe(true);
       expect(fake.downloadCalls).toBe(downloads0); // 结算时已下载（下载计数来自 submit 后 harvest）
     } finally {
-      engine.stop();
+      await engine.stop();
       db.close();
     }
   });

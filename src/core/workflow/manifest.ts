@@ -34,6 +34,79 @@ const baseParam = {
   description: z.string().max(500).optional()
 };
 
+/** default 的显示辅助（错误消息里给实际值） */
+function describeValue(v: unknown): string {
+  if (typeof v === "string") return JSON.stringify(v);
+  if (typeof v === "number" || typeof v === "boolean" || v === null) return String(v);
+  return Array.isArray(v) ? "<array>" : typeof v;
+}
+
+export function seedBounds(p: Pick<ManifestParam, "min" | "max">): { min: number; max: number } {
+  return { min: Math.max(0, Math.ceil(p.min ?? 0)), max: Math.min(0xffff_ffff, Math.floor(p.max ?? 0xffff_ffff)) };
+}
+
+export function isValidSeed(p: Pick<ManifestParam, "min" | "max">, value: unknown): value is number {
+  const range = seedBounds(p);
+  return value === -1 || (typeof value === "number" && Number.isInteger(value) && value >= range.min && value <= range.max);
+}
+
+/**
+ * default 完整校验（P4.1 §二.3）：default 必须自身满足该参数声明的全部约束。
+ * 返回问题清单（空数组 = 通过）。在 superRefine 中调用，非法 manifest 整体拒绝注册。
+ */
+export function validateParamDefault(p: ManifestParam): string[] {
+  if (p.default === undefined) return [];
+  const d = p.default;
+  const where = `params[${p.name}]`;
+  const issues: string[] = [];
+  const push = (msg: string) => issues.push(`${where}: ${msg}`);
+
+  // 类型正确
+  switch (p.type) {
+    case "string":
+      if (typeof d !== "string") push(`default 类型须为 string，实际 ${describeValue(d)}`);
+      break;
+    case "boolean":
+      if (typeof d !== "boolean") push(`default 类型须为 boolean，实际 ${describeValue(d)}`);
+      break;
+    case "number":
+      if (typeof d !== "number" || !Number.isFinite(d)) push(`default 类型须为有限 number，实际 ${describeValue(d)}`);
+      break;
+    case "integer":
+      if (!Number.isInteger(d)) push(`default 类型须为 integer，实际 ${describeValue(d)}`);
+      break;
+    case "enum":
+      if (typeof d !== "string" || !p.enum || !p.enum.includes(d)) {
+        push(`default 须为 enum 合法值（${(p.enum ?? []).join(" | ") || "<空>"}），实际 ${describeValue(d)}`);
+      }
+      break;
+  }
+
+  const isNum = typeof d === "number" && Number.isFinite(d);
+
+  // seed 特殊规则：-1（随机哨兵）或 [min??0, max??0xffffffff] 内的整数（step 不适用）
+  if (p.special === "seed" && isNum) {
+    const { min: lo, max: hi } = seedBounds(p);
+    if (!isValidSeed(p, d)) {
+      push(`seed 的 default 只允许 -1（每次随机）或 [${lo}, ${hi}] 内的整数，实际 ${describeValue(d)}`);
+    }
+    return issues;
+  }
+
+  // min / max / step（number/integer；seed 已在上方单独处理）
+  if (isNum && (p.type === "number" || p.type === "integer")) {
+    if (p.min !== undefined && d < p.min) push(`default(${d}) 低于 min(${p.min})`);
+    if (p.max !== undefined && d > p.max) push(`default(${d}) 超过 max(${p.max})`);
+    if (p.step !== undefined) {
+      const origin = p.min ?? 0;
+      if (Math.abs((d - origin) / p.step - Math.round((d - origin) / p.step)) >= 1e-9) {
+        push(`default(${d}) 未对齐 step=${p.step}${p.min !== undefined ? `（相对 min=${p.min}）` : ""}`);
+      }
+    }
+  }
+  return issues;
+}
+
 export const manifestParamSchema = z
   .object(baseParam)
   .strict()
@@ -55,8 +128,14 @@ export const manifestParamSchema = z
     if (p.special === "seed" && p.type !== "integer") {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${where}: special=seed 要求 type=integer` });
     }
+    if (p.special === "seed" && seedBounds(p).min > seedBounds(p).max) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${where}: seed range contains no valid nonnegative integer` });
+    }
     if (p.required && p.default !== undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${where}: required 参数不应再提供 default` });
+    }
+    for (const issue of validateParamDefault(p)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: issue });
     }
   });
 

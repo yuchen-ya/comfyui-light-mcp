@@ -5,7 +5,7 @@ import { WorkflowRegistry, type LoadReport } from "./workflow/registry.js";
 import { BatchStore, type JobOutputAsset } from "./batch/store.js";
 import { JobRunner } from "./batch/runner.js";
 import { JobTracker } from "./batch/tracker.js";
-import { BatchManager, type BatchView, type RunSpec } from "./batch/manager.js";
+import { BatchManager, type BatchView, type RunSpec, computeRequestFingerprint, assertIdempotencyMatch } from "./batch/manager.js";
 import { Scheduler } from "./batch/scheduler.js";
 import { recoverInFlight, type RecoveryReport } from "./batch/recovery.js";
 import { AssetManager } from "./assets/asset-manager.js";
@@ -51,6 +51,9 @@ export class Engine {
   readonly manager: BatchManager;
   readonly scheduler: Scheduler;
   private readonly assets: AssetManager;
+  private recovery: Promise<RecoveryReport> | null = null;
+  private lastReconciledAt = 0;
+  private connectionEpoch = -1;
 
   constructor(
     readonly config: AppConfig,
@@ -74,7 +77,12 @@ export class Engine {
       registry: this.registry,
       runner: this.runner,
       maxInFlight: config.maxInFlight,
-      maxQueuedJobs: config.maxQueuedJobs
+      maxQueuedJobs: config.maxQueuedJobs,
+      isConnected: () => {
+        const stats = this.client.ws.getStats();
+        return stats.state === "open" && (stats.reconnects ?? 0) === this.connectionEpoch && this.lastReconciledAt !== 0;
+      },
+      beforeTick: () => this.reconcileConnection()
     });
   }
 
@@ -83,15 +91,17 @@ export class Engine {
     return this.registry.load();
   }
 
-  /** 启动调度（恢复完成后调用；周期定时器 unref，不阻塞进程退出） */
+  /** 启动调度；每次连接先恢复对账，周期定时器 unref。 */
   start(): void {
+    this.tracker.resume();
     this.scheduler.ensureStarted();
   }
 
-  /** 关停：调度停摆 + 释放全部跟踪资源（不改动 job 状态） */
-  stop(): void {
-    this.scheduler.stop();
-    this.tracker.disposeAll();
+  /** 关停：停止提交，等待已开始的结果收集，再释放跟踪资源。关闭 DB 前须 await。 */
+  async stop(): Promise<void> {
+    await this.scheduler.stop();
+    await this.tracker.stop();
+    this.lastReconciledAt = 0;
   }
 
   /** list_workflows：摘要 / 指定名详情 */
@@ -111,11 +121,20 @@ export class Engine {
   /**
    * run_workflow（单 params 简写，P2 兼容）：参数错误抛 ParamsValidationError（先于连通性检查）；
    * 提交走统一调度管线（受双窗口约束，首个 tick 同步执行以保持"立即提交"体验）。
+   * 幂等命中先行（含请求指纹比对——同键不同内容 → IDEMPOTENCY_CONFLICT，离线可判）。
    */
   async runSingle(req: { workflow: string; params: Record<string, unknown>; label?: string; idempotencyKey?: string }): Promise<RunHandleView> {
     const wf = this.resolveWorkflow(req.workflow);
     // 参数校验先于连通性检查：参数错误与 ComfyUI 在线与否无关（错误自愈优先）
     validateParams(wf.manifest, req.params);
+    if (req.idempotencyKey) {
+      const existing = this.store.getBatchByIdempotencyKey(req.idempotencyKey);
+      if (existing) {
+        assertIdempotencyMatch(existing, computeRequestFingerprint(wf, { runs: [{ label: req.label, params: req.params }] }));
+        const job = this.store.getJob(existing.id, 0);
+        return { batch_id: existing.id, index: 0, status: job?.status ?? "pending" };
+      }
+    }
     this.assertConnected();
     const created = this.manager.createBatch(wf, {
       runs: [{ label: req.label, params: req.params }],
@@ -132,6 +151,7 @@ export class Engine {
   /**
    * run_workflow（runs 数组，批量）：结构性错误抛 ComfyLightError；
    * 单 run 参数错误 → invalid job（部分容错），合法任务照常执行。
+   * 幂等命中先行（只读语义，不受连通性影响；同键不同内容 → IDEMPOTENCY_CONFLICT）。
    */
   async runBatch(req: {
     workflow: string;
@@ -141,10 +161,10 @@ export class Engine {
     maxAttempts?: number;
   }): Promise<BatchHandleView> {
     const wf = this.resolveWorkflow(req.workflow);
-    // 幂等命中先行（只读语义，不受连通性影响）
     if (req.idempotencyKey) {
       const existing = this.store.getBatchByIdempotencyKey(req.idempotencyKey);
       if (existing) {
+        assertIdempotencyMatch(existing, computeRequestFingerprint(wf, req));
         return { batch_id: existing.id, total: existing.total, invalid: this.manager.getBatchView(existing.id, { limit: 1 }).stats.invalid, reused: true, status: existing.status };
       }
     }
@@ -233,15 +253,32 @@ export class Engine {
     };
   }
 
-  /** 启动恢复（A1 语义在 recovery.ts 落实；恢复后 pending job 由 Scheduler 自然续跑） */
+  /** 启动恢复（A1 语义 + P4.1 加固在 recovery.ts 落实；恢复后 pending job 由 Scheduler 自然续跑） */
   async recover(): Promise<RecoveryReport> {
-    return recoverInFlight({
+    this.recovery ??= recoverInFlight({
       client: this.client,
       store: this.store,
       assets: this.assets,
       tracker: this.tracker,
-      autoSave: this.config.autoSaveOutputs
-    });
+      autoSave: this.config.autoSaveOutputs,
+      registry: this.registry
+    }).finally(() => { this.recovery = null; });
+    return this.recovery;
+  }
+
+  private async reconcileConnection(): Promise<void> {
+    const stats = this.client.ws.getStats();
+    if (stats.state !== "open") {
+      this.lastReconciledAt = 0;
+      return;
+    }
+    // Bound unknown reconciliation to one pass per three seconds; reconnects
+    // bypass the interval. Scheduler serializes this before every submit loop.
+    const epoch = stats.reconnects ?? 0;
+    if (this.lastReconciledAt && epoch === this.connectionEpoch && Date.now() - this.lastReconciledAt < 3000) return;
+    await this.recover();
+    this.connectionEpoch = epoch;
+    this.lastReconciledAt = Date.now();
   }
 
   private resolveWorkflow(name: string) {

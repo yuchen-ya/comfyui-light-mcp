@@ -1,6 +1,7 @@
 import { z, type ZodType } from "zod";
 import type { WorkflowGraph } from "../client/types.js";
 import type { ManifestParam, WorkflowManifest } from "./manifest.js";
+import { isValidSeed, seedBounds } from "./manifest.js";
 
 /**
  * Parameter Validator/Mapper（docs/002 §4.2）：
@@ -23,7 +24,6 @@ export class ParamsValidationError extends Error {
 }
 
 export const RANDOM_SEED = -1;
-const SEED_MAX = 0xffff_ffff;
 
 function zodForParam(p: ManifestParam): ZodType {
   let base: ZodType;
@@ -51,6 +51,12 @@ function zodForParam(p: ManifestParam): ZodType {
 export function buildValidator(m: WorkflowManifest): ZodType {
   const shape: Record<string, ZodType> = {};
   for (const p of m.params) {
+    if (p.special === "seed") {
+      const range = seedBounds(p);
+      const seed = z.number().int().refine((v) => isValidSeed(p, v), { message: `seed 须为 -1 或 [${range.min}, ${range.max}] 内的整数` });
+      shape[p.name] = p.required ? seed : seed.optional();
+      continue;
+    }
     let s = zodForParam(p);
     const checks = p.type === "number" || p.type === "integer";
     if (checks && p.min !== undefined && p.max !== undefined) {
@@ -105,7 +111,8 @@ export interface ApplyResult {
 function effectiveSeed(p: ManifestParam, provided: number | undefined): number {
   const value = provided ?? (typeof p.default === "number" ? p.default : RANDOM_SEED);
   if (value === RANDOM_SEED) {
-    return Math.floor(Math.random() * (SEED_MAX + 1));
+    const range = seedBounds(p);
+    return range.min + Math.floor(Math.random() * (range.max - range.min + 1));
   }
   return value;
 }

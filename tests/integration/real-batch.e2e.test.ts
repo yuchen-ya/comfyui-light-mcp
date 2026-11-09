@@ -116,7 +116,8 @@ describe.skipIf(!reachable)(`真实 ComfyUI 批量执行（${runs.length} 任务
           queued: 0,
           pending: 0,
           invalid: 1,
-          unknown: 0
+          unknown: 0,
+          paused: 0
         });
 
         // —— 非法 combo → failed + 归一化 node_errors（§七真实结构）——
@@ -180,7 +181,7 @@ describe.skipIf(!reachable)(`真实 ComfyUI 批量执行（${runs.length} 任务
 
         console.error(`[e2e-batch] ComfyUI ${comfyuiVersion} → 7 张图片至 ${outDir}（串行双窗口 1/1）`);
       } finally {
-        engine.stop();
+        await engine.stop();
         client.stop();
         db.close();
       }

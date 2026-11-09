@@ -87,6 +87,11 @@ export class ComfyHttp {
       body: JSON.stringify(body),
       timeoutMs: 60_000
     });
+    // A server/proxy failure can occur after acceptance. It cannot authorize
+    // another generation; the runner must retain submission_unknown instead.
+    if (res.status !== 200 && res.status !== 400) {
+      throw new ComfyLightError("COMFY_HTTP_ERROR", `Uncertain /prompt response: HTTP ${res.status}`);
+    }
     const text = await res.text();
     let json: Record<string, unknown> = {};
     try {
