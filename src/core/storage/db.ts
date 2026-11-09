@@ -105,7 +105,7 @@ export function openDb(file: string | ":memory:"): Database.Database {
 /** 顺序执行未应用的迁移，user_version 记录进度（幂等） */
 export function migrate(db: Database.Database): void {
   const current = db.pragma("user_version", { simple: true }) as number;
-  if (current > 4) throw new Error(`Unsupported database schema v${current}; preserve the database and use a compatible application version.`);
+  if (current > 5) throw new Error(`Unsupported database schema v${current}; preserve the database and use a compatible application version.`);
   db.transaction(() => {
     for (const m of MIGRATIONS) {
       if (m.version <= current) continue;
@@ -143,6 +143,39 @@ WHERE status = 'pending' AND batch_id IN (
 );
 `);
       db.pragma("user_version = 4");
+    }
+    if (current < 5) {
+      // Old resetForRetry changed only the job to pending. Its previous attempt
+      // may still be executing remotely, including in databases already on v4.
+      // Recover intent before clearing the old terminal status/timestamps, and
+      // keep the original errors (including remote_cancel) for reconciliation.
+      db.exec(`
+UPDATE job_attempts SET cancel_requested_at = COALESCE(cancel_requested_at, finished_at, submitted_at, CURRENT_TIMESTAMP)
+WHERE terminal_confirmed = 0 AND (status = 'timeout' OR json_extract(error_json, '$.code') = 'TIMEOUT'
+  OR job_id IN (SELECT id FROM jobs WHERE json_extract(error_json, '$.code') = 'TIMEOUT'))
+AND EXISTS (SELECT 1 FROM jobs j JOIN batches b ON b.id = j.batch_id
+  WHERE j.id = job_attempts.job_id AND j.attempt_no = job_attempts.attempt_no
+    AND j.status = 'pending' AND j.attempt_no > 0 AND b.status = 'running');
+UPDATE job_attempts SET success_observed_at = COALESCE(success_observed_at, finished_at, submitted_at, CURRENT_TIMESTAMP)
+WHERE terminal_confirmed = 0 AND (json_extract(error_json, '$.code') = 'NO_HISTORY'
+  OR job_id IN (SELECT id FROM jobs WHERE json_extract(error_json, '$.code') = 'NO_HISTORY'))
+AND EXISTS (SELECT 1 FROM jobs j JOIN batches b ON b.id = j.batch_id
+  WHERE j.id = job_attempts.job_id AND j.attempt_no = job_attempts.attempt_no
+    AND j.status = 'pending' AND j.attempt_no > 0 AND b.status = 'running');
+UPDATE job_attempts SET status = 'submission_unknown', finished_at = NULL,
+  error_json = COALESCE(error_json, (SELECT error_json FROM jobs WHERE id = job_attempts.job_id))
+WHERE terminal_confirmed = 0 AND EXISTS (SELECT 1 FROM jobs j JOIN batches b ON b.id = j.batch_id
+  WHERE j.id = job_attempts.job_id AND j.attempt_no = job_attempts.attempt_no
+    AND j.status = 'pending' AND j.attempt_no > 0 AND b.status = 'running');
+UPDATE jobs SET status = 'submission_unknown', finished_at = NULL,
+  error_json = COALESCE(error_json,
+    (SELECT error_json FROM job_attempts a WHERE a.job_id = jobs.id AND a.attempt_no = jobs.attempt_no),
+    '{"code":"LEGACY_TERMINAL_UNVERIFIED","message":"Previous attempt has no remote confirmation; reconciliation required before retry."}')
+WHERE status = 'pending' AND attempt_no > 0 AND batch_id IN (SELECT id FROM batches WHERE status = 'running')
+  AND NOT EXISTS (SELECT 1 FROM job_attempts a WHERE a.job_id = jobs.id
+    AND a.attempt_no = jobs.attempt_no AND a.terminal_confirmed = 1);
+`);
+      db.pragma("user_version = 5");
     }
   })();
 }

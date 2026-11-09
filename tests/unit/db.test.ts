@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { openDb } from "../../src/core/storage/db.js";
 
 describe("storage db", () => {
-  it("打开即迁移到 v4（user_version=4），幂等", () => {
+  it("打开即迁移到 v5（user_version=5），幂等", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(4);
+    expect(db.pragma("user_version", { simple: true })).toBe(5);
     db.close();
     const db2 = openDb(":memory:");
-    expect(db2.pragma("user_version", { simple: true })).toBe(4);
+    expect(db2.pragma("user_version", { simple: true })).toBe(5);
     db2.close();
   });
 

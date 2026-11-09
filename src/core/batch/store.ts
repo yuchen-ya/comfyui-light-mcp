@@ -242,8 +242,9 @@ export class BatchStore {
   }
 
   retryEligibility(job: JobRow, opts: BatchOptions): boolean {
+    const attempt = this.getAttempt(job);
     return (job.status === "failed" || job.status === "timeout") && job.attempt_no < opts.max_attempts &&
-      this.getAttempt(job)?.terminal_confirmed === 1;
+      attempt?.terminal_confirmed === 1 && (attempt.status === "failed" || attempt.status === "timeout");
   }
 
   /** 服务端回显了不同 prompt_id 时同步 attempt 行（历史记录以实际生效 id 为准） */
@@ -262,7 +263,8 @@ export class BatchStore {
 
   /**
    * 条件占位提交（Scheduler 防重复提交的关键）：
-   * 仅当 job 仍为 pending 时，在同一事务内 → status=submitting、写入新 prompt_id、
+   * 仅当 job 仍为 pending 且上一 attempt 已确认终止并允许重试时，在同一事务内
+   * → status=submitting、写入新 prompt_id、
    * attempt_no+1、resolved_json，并预写 attempt 行（先落库后 POST，A1 顺序不变）。
    * 返回 null 表示占位失败（已被其他提交路径处理/状态已变）。
    */
@@ -276,6 +278,12 @@ export class BatchStore {
     return this.transaction(() => {
       const job = this.getJobById(jobId);
       if (!job || job.status !== "pending") return null;
+      if (job.attempt_no > 0) {
+        const previous = this.getAttempt(job);
+        const opts = parseBatchOptions(this.getBatch(job.batch_id)!.options_json);
+        if (!previous || (previous.status !== "failed" && previous.status !== "timeout") ||
+          !this.retryEligibility({ ...job, status: previous.status }, opts)) return null;
+      }
       const attemptNo = job.attempt_no + 1;
       this.patchJob(jobId, {
         status: "submitting",

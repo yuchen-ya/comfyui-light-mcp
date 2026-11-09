@@ -33,7 +33,7 @@ describe("Task005R actual legacy schema upgrades", () => {
       await engine.loadWorkflowsAsync();
       engine.start();
       await engine.scheduler.tick();
-      expect(db.pragma("user_version", { simple: true })).toBe(4);
+      expect(db.pragma("user_version", { simple: true })).toBe(5);
       expect(engine.store.getJobById("pending")!.status).toBe("paused");
       expect(engine.store.getJobById("pending")!.error_json).toContain("LEGACY_SNAPSHOT_MISSING");
       expect(fake.state.submitCalls).toBe(0);

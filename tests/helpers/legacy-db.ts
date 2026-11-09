@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 
-/** Schema fixture from P3/v2; variant columns reproduce the two experimental v3s. */
-export function legacyDb(file: string, variant: "v2" | "4.1" | "4.1new"): Database.Database {
+/** Schema fixture from P3/v2; variants reproduce experimental v3s and released v4. */
+export function legacyDb(file: string, variant: "v2" | "4.1" | "4.1new" | "v4"): Database.Database {
   const db = new Database(file);
   db.exec(`
 CREATE TABLE batches (id TEXT PRIMARY KEY, workflow TEXT NOT NULL, workflow_version INTEGER NOT NULL,
@@ -21,6 +21,14 @@ CREATE INDEX idx_jobs_retryable ON jobs(batch_id, idx) WHERE status IN ('failed'
       db.exec(`ALTER TABLE batches ADD COLUMN ${prefix}_${variant === "4.1" ? "fp" : "fingerprint"} TEXT`);
     }
   }
-  db.pragma(`user_version = ${variant === "v2" ? 2 : 3}`);
+  if (variant === "v4") {
+    db.exec(`
+ALTER TABLE job_attempts ADD COLUMN deadline_at TEXT;
+ALTER TABLE job_attempts ADD COLUMN cancel_requested_at TEXT;
+ALTER TABLE job_attempts ADD COLUMN success_observed_at TEXT;
+ALTER TABLE job_attempts ADD COLUMN terminal_confirmed INTEGER NOT NULL DEFAULT 0;
+`);
+  }
+  db.pragma(`user_version = ${variant === "v2" ? 2 : variant === "v4" ? 4 : 3}`);
   return db;
 }
