@@ -1,8 +1,9 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { WorkflowGraph } from "../client/types.js";
-import { loadWorkflowGraph, WorkflowFormatError } from "./loader.js";
+import { parseWorkflowGraph, WorkflowFormatError } from "./loader.js";
 import { ManifestError, parseManifest, type WorkflowManifest } from "./manifest.js";
+import { sha256Hex } from "../../shared/fingerprint.js";
 
 /** 递归收集 *.manifest.json（返回相对 workflowsDir 的路径） */
 async function listManifestFiles(root: string, rel: string): Promise<string[]> {
@@ -26,11 +27,19 @@ async function listManifestFiles(root: string, rel: string): Promise<string[]> {
  * load() 不抛异常：逐文件错误进 LoadReport（上下文友好，Agent 可自愈）。
  */
 
+/** 工作流内容指纹（Task 005 §二.2）：manifest 与 API JSON 各自原始文本的 sha256 */
+export interface WorkflowFingerprint {
+  readonly manifest: string;
+  readonly graph: string;
+}
+
 export interface RegisteredWorkflow {
   readonly manifest: WorkflowManifest;
   readonly graph: WorkflowGraph;
   /** manifest 文件绝对路径（错误定位用） */
   readonly sourceFile: string;
+  /** 注册时内容指纹（batch 创建时快照，恢复/续跑时比对防版本漂移） */
+  readonly fingerprint: WorkflowFingerprint;
 }
 
 export interface WorkflowSummary {
@@ -103,17 +112,28 @@ export class WorkflowRegistry {
       try {
         const text = await readFile(manifestPath, "utf8");
         const manifest = parseManifest(mf, text);
-        const graph = await loadWorkflowGraph(manifest.workflowFile, path.dirname(manifestPath));
+        let graphText: string;
+        try {
+          graphText = await readFile(path.join(path.dirname(manifestPath), manifest.workflowFile), "utf8");
+        } catch (e) {
+          throw new WorkflowFormatError(manifest.workflowFile, `读取失败: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        const graph = parseWorkflowGraph(manifest.workflowFile, graphText);
         const xerr = crossValidate(manifest, graph, mf);
         if (xerr) {
           report.errors.push(xerr);
           continue;
         }
         if (this.byName.has(manifest.name)) {
-          report.errors.push({ file: mf, message: `工作流名 "${manifest.name}" 重复（已由先前的 manifest 注册）` });
+          report.errors.push({ file: mf, message: `工作流名 "${manifest.name}" 重复（已由先有的 manifest 注册）` });
           continue;
         }
-        this.byName.set(manifest.name, { manifest, graph, sourceFile: manifestPath });
+        this.byName.set(manifest.name, {
+          manifest,
+          graph,
+          sourceFile: manifestPath,
+          fingerprint: { manifest: sha256Hex(text), graph: sha256Hex(graphText) }
+        });
         report.loaded.push({
           name: manifest.name,
           description: manifest.description,

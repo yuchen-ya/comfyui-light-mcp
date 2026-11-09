@@ -47,38 +47,43 @@ async function recoverOne(deps: RecoveryDeps, job: JobRow, report: RecoveryRepor
     report.keptUnknown++;
     return;
   }
-  const hist = await deps.client.http.getHistory(job.prompt_id).catch(() => null);
-  if (hist) {
-    // 终态优先级（Task 004 §二.1）：error/interrupted 先判，error 不得因部分 outputs 判 succeeded
-    const verdict = historyVerdict(hist);
-    if (verdict === "error") {
-      deps.store.patchJob(job.id, {
-        status: "failed",
-        error_json: JSON.stringify({ code: "EXECUTION_ERROR", message: "崩溃期间执行失败（恢复时经 history 判定）" }),
-        finished_at: new Date().toISOString()
-      });
-    } else if (verdict === "interrupted") {
-      deps.store.patchJob(job.id, {
-        status: "failed",
-        error_json: JSON.stringify({ code: "INTERRUPTED", message: "崩溃期间被中断（恢复时经 history 判定）" }),
-        finished_at: new Date().toISOString()
-      });
-    } else if (verdict === "success") {
-      let outputs;
-      if (deps.autoSave) {
-        outputs = await deps.assets.saveOutputs(job.batch_id, job.idx, hist).catch((e) => {
-          throw new Error(`恢复落盘失败: ${e instanceof Error ? e.message : String(e)}`);
+    const hist = await deps.client.http.getHistory(job.prompt_id).catch(() => null);
+    if (hist) {
+      // 终态优先级（Task 004 §二.1）：error/interrupted 先判，error 不得因部分 outputs 判 succeeded
+      const verdict = historyVerdict(hist);
+      const nowFinished = new Date().toISOString();
+      if (verdict === "error") {
+        deps.store.patchJob(job.id, {
+          status: "failed",
+          error_json: JSON.stringify({ code: "EXECUTION_ERROR", message: "崩溃期间执行失败（恢复时经 history 判定）" }),
+          finished_at: nowFinished
         });
+        deps.store.patchAttemptStatus(job.id, job.attempt_no, "failed", nowFinished);
+      } else if (verdict === "interrupted") {
+        // 统一中断语义（Task 005 §二.1）：崩溃期间被（用户/ComfyUI 侧）中断 → cancelled，非 failed
+        deps.store.patchJob(job.id, {
+          status: "cancelled",
+          error_json: JSON.stringify({ code: "INTERRUPTED", message: "崩溃期间被中断（恢复时经 history 判定）" }),
+          finished_at: nowFinished
+        });
+        deps.store.patchAttemptStatus(job.id, job.attempt_no, "cancelled", nowFinished);
+      } else if (verdict === "success") {
+        let outputs;
+        if (deps.autoSave) {
+          outputs = await deps.assets.saveOutputs(job.batch_id, job.idx, hist).catch((e) => {
+            throw new Error(`恢复落盘失败: ${e instanceof Error ? e.message : String(e)}`);
+          });
+        } else {
+          // 与 tracker 一致：不落盘时记录引用（get_result 按需下载）
+          outputs = harvestOutputRefs(hist).map((r) => ({ ...r, local_path: "", bytes: 0 }));
+        }
+        deps.store.patchJob(job.id, {
+          status: "succeeded",
+          outputs_json: JSON.stringify(outputs ?? []),
+          finished_at: nowFinished
+        });
+        deps.store.patchAttemptStatus(job.id, job.attempt_no, "succeeded", nowFinished);
       } else {
-        // 与 tracker 一致：不落盘时记录引用（get_result 按需下载）
-        outputs = harvestOutputRefs(hist).map((r) => ({ ...r, local_path: "", bytes: 0 }));
-      }
-      deps.store.patchJob(job.id, {
-        status: "succeeded",
-        outputs_json: JSON.stringify(outputs ?? []),
-        finished_at: new Date().toISOString()
-      });
-    } else {
       // history 有记录但未完成（罕见）：留在队列判定分支处理
       await requeueOrUnknown(deps, job, report);
       return;

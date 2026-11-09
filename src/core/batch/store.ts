@@ -59,6 +59,12 @@ export interface BatchRow {
   options_json: string;
   created_at: string;
   finished_at: string | null;
+  /** batch 创建时的 manifest 内容指纹（v3 起；NULL=旧数据跳过版本校验） */
+  manifest_fp: string | null;
+  /** batch 创建时的 API workflow JSON 内容指纹 */
+  graph_fp: string | null;
+  /** 幂等键对应的请求内容指纹（同键不同内容 → IDEMPOTENCY_CONFLICT） */
+  request_fp: string | null;
 }
 
 export interface JobOutputAsset {
@@ -113,8 +119,8 @@ export class BatchStore {
   createBatch(b: BatchRow): void {
     this.db
       .prepare(
-        `INSERT INTO batches (id, workflow, workflow_version, idempotency_key, status, total, options_json, created_at, finished_at)
-         VALUES (@id, @workflow, @workflow_version, @idempotency_key, @status, @total, @options_json, @created_at, @finished_at)`
+        `INSERT INTO batches (id, workflow, workflow_version, idempotency_key, status, total, options_json, created_at, finished_at, manifest_fp, graph_fp, request_fp)
+         VALUES (@id, @workflow, @workflow_version, @idempotency_key, @status, @total, @options_json, @created_at, @finished_at, @manifest_fp, @graph_fp, @request_fp)`
       )
       .run(b as unknown as Record<string, unknown>);
   }
@@ -293,32 +299,54 @@ export class BatchStore {
     });
   }
 
-  /** continue_on_error=false 的 batch：已有终态失败的，返回其 id（剩余 pending 将被放弃） */
+  /**
+   * continue_on_error=false 且已出现【终态失败】的 batch（剩余 pending 将被放弃）。
+   * 终态失败 = invalid，或 failed/timeout 且重试已耗尽（attempt_no >= max_attempts）——
+   * 失败但仍有重试次数的 job 不触发级联（先重试，Task 005 §二.5 组合语义）。
+   */
   batchesNeedingAbort(): string[] {
     const rows = this.db
       .prepare(
-        `SELECT DISTINCT b.id FROM batches b
+        `SELECT DISTINCT b.id, b.options_json FROM batches b
          JOIN jobs j ON j.batch_id = b.id
          WHERE b.status = 'running' AND j.status IN ('failed','timeout','invalid')`
       )
-      .all() as Array<{ id: string }>;
-    return rows
-      .filter((r) => {
-        const b = this.getBatch(r.id)!;
-        return !parseBatchOptions(b.options_json).continue_on_error;
-      })
-      .map((r) => r.id);
+      .all() as Array<{ id: string; options_json: string }>;
+    const out: string[] = [];
+    for (const r of rows) {
+      const opts = parseBatchOptions(r.options_json);
+      if (opts.continue_on_error) continue;
+      const terminal = this.db
+        .prepare(
+          `SELECT 1 FROM jobs WHERE batch_id = ? AND (
+             status = 'invalid' OR (status IN ('failed','timeout') AND attempt_no >= ?)
+           ) LIMIT 1`
+        )
+        .get(r.id, opts.max_attempts);
+      if (terminal) out.push(r.id);
+    }
+    return out;
   }
 
-  /** 放弃 batch 内全部 pending job（continue_on_error=false 时级联） */
-  abortPendingJobs(batchId: string, reason: string): number {
+  /** 存在 pending job 的 batch 快照（调度器版本指纹校验用） */
+  pendingBatchSnapshots(): Array<{ id: string; workflow: string; manifest_fp: string | null; graph_fp: string | null }> {
+    return this.db
+      .prepare(
+        `SELECT DISTINCT b.id, b.workflow, b.manifest_fp, b.graph_fp FROM batches b
+         JOIN jobs j ON j.batch_id = b.id WHERE j.status = 'pending'`
+      )
+      .all() as Array<{ id: string; workflow: string; manifest_fp: string | null; graph_fp: string | null }>;
+  }
+
+  /** 放弃 batch 内全部 pending job（continue_on_error 级联 / 工作流版本失配） */
+  abortPendingJobs(batchId: string, reason: string, code = "BATCH_ABORTED"): number {
     return this.db
       .prepare(
         `UPDATE jobs SET status = 'cancelled', error_json = ?, finished_at = ?
          WHERE batch_id = ? AND status = 'pending'`
       )
       .run(
-        JSON.stringify({ code: "BATCH_ABORTED", message: reason }),
+        JSON.stringify({ code, message: reason }),
         new Date().toISOString(),
         batchId
       ).changes;

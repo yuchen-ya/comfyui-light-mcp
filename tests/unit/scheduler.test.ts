@@ -43,7 +43,8 @@ const wf: RegisteredWorkflow = {
     "7": { class_type: "KSampler", inputs: { seed: 42 } },
     "9": { class_type: "SaveImage", inputs: { images: ["8", 0] } }
   },
-  sourceFile: "t.manifest.json"
+  sourceFile: "t.manifest.json",
+  fingerprint: { manifest: "fp-manifest-s", graph: "fp-graph-s" }
 };
 
 const registryLike = { get: (name: string) => (name === "t" ? wf : undefined) } as unknown as WorkflowRegistry;
@@ -311,6 +312,95 @@ describe("失败隔离与重试", () => {
     expect(ctx.fake.submitCalls).toBe(1);
     expect(ctx.store.getJob(res.batchId, 0)!.status).toBe("submission_unknown");
     expect(ctx.store.getAttempts(ctx.store.getJob(res.batchId, 0)!.id)).toHaveLength(1);
+    ctx.tracker.disposeAll();
+    ctx.db.close();
+  });
+});
+
+describe("组合语义：continue_on_error=false × max_attempts>1（Task 005 §二.5）", () => {
+  it("失败且重试未耗尽 → 先重试，不级联；重试成功则整批照常完成", async () => {
+    const ctx = makeCtx();
+    let flakySeen = 0;
+    ctx.fake.submitImpl = async (graph, opts) => {
+      const text = String((graph["4"]!.inputs as Record<string, unknown>)["text"]);
+      if (text === "flaky" && flakySeen++ === 0) {
+        return { ok: false, httpStatus: 400, errorBody: { type: "x" }, nodeErrors: null };
+      }
+      return { ok: true, promptId: opts?.promptId ?? "x", number: 1, nodeErrors: {} };
+    };
+    const res = ctx.manager.createBatch(wf, {
+      runs: [run("flaky"), run("b"), run("c")],
+      continueOnError: false, // 严格模式
+      maxAttempts: 2
+    });
+    await drain(ctx, res.batchId);
+    // 首次失败未触发级联（b/c 未被取消），重试后全部完成
+    const view = ctx.manager.getBatchView(res.batchId);
+    expect(view.jobs.map((j) => [j.index, j.status])).toEqual([[0, "succeeded"], [1, "succeeded"], [2, "succeeded"]]);
+    expect(view.status).toBe("completed");
+    expect(ctx.fake.submitCalls).toBe(4); // flaky×2 + b + c
+    ctx.tracker.disposeAll();
+    ctx.db.close();
+  });
+
+  it("重试耗尽的终态失败才级联：pending → cancelled；已在途 job 继续执行且结果保留", async () => {
+    const ctx = makeCtx({ maxInFlight: 2, maxQueuedJobs: 1 });
+    ctx.fake.submitImpl = async (graph) => {
+      const text = String((graph["4"]!.inputs as Record<string, unknown>)["text"]);
+      if (text === "always-bad") {
+        return { ok: false, httpStatus: 400, errorBody: { type: "x" }, nodeErrors: null };
+      }
+      return { ok: true, promptId: "x", number: 1, nodeErrors: {} };
+    };
+    const res = ctx.manager.createBatch(wf, {
+      runs: [run("always-bad"), run("in-flight-ok"), run("pending-1"), run("pending-2")],
+      continueOnError: false,
+      maxAttempts: 2
+    });
+    // 拍 1：always-bad 提交即拒（不占额度）；in-flight-ok 入队（MAX_QUEUED_JOBS=1 满）
+    await ctx.scheduler.tick();
+    expect(ctx.fake.submitCalls).toBe(2);
+    const inFlight = ctx.store.getJob(res.batchId, 1)!;
+    expect(inFlight.status).toBe("queued"); // 在途
+    expect(ctx.store.getJob(res.batchId, 0)!.status).toBe("failed"); // attempt 1 失败（非终态：还有重试）
+    // 拍 2：bad 重置为 pending 等待重试，但 MAX_QUEUED_JOBS=1 被 in-flight-ok 占据 →
+    // 重试暂不提交；此时无终态失败 → 不级联（pending-1/2 保持 pending）
+    await ctx.scheduler.tick();
+    const bad = ctx.store.getJob(res.batchId, 0)!;
+    expect(bad.status).toBe("pending"); // 等窗口
+    expect(bad.attempt_no).toBe(1);
+    expect(ctx.store.getJob(res.batchId, 2)!.status).toBe("pending"); // 未级联
+    // 在途任务自然完成（未被取消，结果保留）
+    await succeed(ctx.store, ctx.fake, inFlight);
+    expect(ctx.store.getJob(res.batchId, 1)!.status).toBe("succeeded");
+    // 拍 3：窗口空出 → bad 重试（attempt 2）→ 再次失败 = 终态失败 → 同拍级联取消 pending-1/2
+    await ctx.scheduler.tick();
+    const badFinal = ctx.store.getJob(res.batchId, 0)!;
+    expect(badFinal.status).toBe("failed");
+    expect(badFinal.attempt_no).toBe(2);
+    const p1 = ctx.store.getJob(res.batchId, 2)!;
+    const p2 = ctx.store.getJob(res.batchId, 3)!;
+    expect(p1.status).toBe("cancelled");
+    expect(p2.status).toBe("cancelled");
+    expect((JSON.parse(p1.error_json!) as { code: string }).code).toBe("BATCH_ABORTED");
+    const view = ctx.manager.getBatchView(res.batchId);
+    // failed 口径 = failed(1) + cancelled(2)
+    expect(view.stats).toEqual({ total: 4, succeeded: 1, failed: 3, running: 0, queued: 0, pending: 0, invalid: 0, unknown: 0 });
+    expect(view.status).toBe("partial");
+    expect(ctx.fake.submitCalls).toBe(3); // bad×2 + in-flight；pending 从未提交
+    ctx.tracker.disposeAll();
+    ctx.db.close();
+  });
+
+  it("invalid（创建即拒）在严格模式下同样触发级联", async () => {
+    const ctx = makeCtx();
+    const res = ctx.manager.createBatch(wf, {
+      runs: [{ params: {} }, run("b")], // 缺 required prompt → invalid
+      continueOnError: false
+    });
+    await ctx.scheduler.tick();
+    expect(ctx.store.getJob(res.batchId, 1)!.status).toBe("cancelled"); // 未提交即放弃
+    expect(ctx.fake.submitCalls).toBe(0);
     ctx.tracker.disposeAll();
     ctx.db.close();
   });

@@ -7,6 +7,10 @@ import { type JobRow, type JobError, type JobOutputAsset } from "./store.js";
  * JobTracker：在途 job 的后台跟踪。
  * - WS 事件（按 prompt_id 多路分解）驱动状态推进
  * - history 轮询兜底（每 3s）：WS 丢失/断线也能定终态（P1 S7 已验证该路径可靠）
+ * - 统一中断语义（Task 005 §二.1）：
+ *     用户/ComfyUI 侧中断（interrupted 事件或 history interrupted）→ cancelled
+ *     我方超时取消窗口内的 interrupted 回声 → 忽略，timeout 终态（含 remote_cancel）落定
+ *     ComfyUI 执行失败（error）→ failed；提交结果不确定 → submission_unknown（runner 侧）
  * - 墙钟超时：queued→POST /queue delete + executing→POST /interrupt 组合取消
  *   （docs/003 F5：interrupt 对排队任务是 no-op，两动作对错误态均为无害 no-op → 竞态安全）
  * - History 终态优先级（Task 004 §二.1）：error/interrupted 判定优先于 outputs 存在性，
@@ -30,6 +34,12 @@ interface Tracked {
   pollTimer: NodeJS.Timeout | null;
   timeoutTimer: NodeJS.Timeout | null;
   settled: boolean;
+  /**
+   * 超时取消进行中（Task 005 §二.1）：此窗口内到达的 execution_interrupted /
+   * history interrupted 是【我们自己发出的取消】的回声——不是用户中断，
+   * 必须让 timeout 终态（含 remote_cancel 记录）落定，不得抢跑成 cancelled/failed。
+   */
+  cancelling: boolean;
 }
 
 /** history.status → 终态判定（优先级：error/interrupted > success/completed > 有输出） */
@@ -76,7 +86,8 @@ export class JobTracker {
       unsubscribe: () => {},
       pollTimer: null,
       timeoutTimer: null,
-      settled: false
+      settled: false,
+      cancelling: false
     };
 
     // WS 事件驱动
@@ -99,9 +110,12 @@ export class JobTracker {
           });
           break;
         case "interrupted":
-          this.settle(t, "failed", {
+          // 统一中断语义（Task 005 §二.1）：非我方取消的 interrupt = ComfyUI 侧（通常为用户）主动取消
+          // → cancelled；我方超时取消窗口内的 interrupt 回声 → 忽略，由 timeout 终态落定
+          if (t.cancelling) break;
+          this.settle(t, "cancelled", {
             code: "INTERRUPTED",
-            message: "执行被中断（ComfyUI 侧 interrupt）"
+            message: "执行被中断（ComfyUI 侧 interrupt，非本系统超时取消）"
           });
           break;
         default:
@@ -125,6 +139,8 @@ export class JobTracker {
               message: "history 轮询判定终态: error"
             });
           } else if (verdict === "interrupted") {
+            // 我方超时取消窗口内 → 回声，忽略（timeout 终态随后落定）
+            if (t.cancelling) return;
             this.settle(t, "cancelled", {
               code: "INTERRUPTED",
               message: "history 轮询判定终态: interrupted"
@@ -134,7 +150,8 @@ export class JobTracker {
         .catch(() => undefined); // ComfyUI 暂不可达时下轮再试
     }, HISTORY_POLL_MS);
 
-    // 墙钟超时：先组合取消（记录远端结果），取消期间若事件已定终态则以先到者为准
+    // 墙钟超时：先标记 cancelling（拦截取消回声），再组合取消（记录远端结果），
+    // 取消期间若 job 已由真实事件定终态（如恰好成功）则以先到者为准
     t.timeoutTimer = setTimeout(() => {
       if (t.settled) return;
       void this.handleTimeout(t, promptId);
@@ -144,6 +161,7 @@ export class JobTracker {
   }
 
   private async handleTimeout(t: Tracked, promptId: string): Promise<void> {
+    t.cancelling = true; // 先拦回声，再发取消（顺序保证：回声到达时标志已置位）
     const remote = await this.cancelRemote(promptId);
     if (t.settled) return; // 竞态：取消进行中 job 已由事件定终态（如恰好成功），保持原判定
     this.settle(t, "timeout", {
@@ -192,6 +210,7 @@ export class JobTracker {
       return;
     }
     if (verdict === "interrupted") {
+      if (t.cancelling) return; // 我方取消回声：让 timeout 终态落定
       this.settle(t, "cancelled", { code: "INTERRUPTED", message: "execution_success 后 history 记录为 interrupted" });
       return;
     }

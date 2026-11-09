@@ -12,6 +12,7 @@ export type ErrorCode =
   | "TIMEOUT"
   | "NOT_FOUND"
   | "INVALID_RUNS"
+  | "IDEMPOTENCY_CONFLICT"
   | "INTERNAL";
 
 export class ComfyLightError extends Error {

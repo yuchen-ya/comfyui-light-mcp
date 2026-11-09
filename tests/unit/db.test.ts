@@ -2,13 +2,31 @@ import { describe, expect, it } from "vitest";
 import { openDb } from "../../src/core/storage/db.js";
 
 describe("storage db", () => {
-  it("打开即迁移到 v2（user_version=2），幂等", () => {
+  it("打开即迁移到 v3（user_version=3），幂等", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(2);
+    expect(db.pragma("user_version", { simple: true })).toBe(3);
     db.close();
     const db2 = openDb(":memory:");
-    expect(db2.pragma("user_version", { simple: true })).toBe(2);
+    expect(db2.pragma("user_version", { simple: true })).toBe(3);
     db2.close();
+  });
+
+  it("v3 新增指纹列存在且可写（manifest_fp/graph_fp/request_fp）", () => {
+    const db = openDb(":memory:");
+    const cols = db.prepare("PRAGMA table_info(batches)").all() as Array<{ name: string }>;
+    const names = cols.map((c) => c.name);
+    expect(names).toContain("manifest_fp");
+    expect(names).toContain("graph_fp");
+    expect(names).toContain("request_fp");
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO batches (id, workflow, workflow_version, status, total, options_json, created_at, manifest_fp, graph_fp, request_fp) VALUES (?,?,?,?,?,?,?,?,?,?)"
+    ).run("b1", "demo", 1, "running", 1, "{}", now, "mfpx", "gfpx", "rfpx");
+    const row = db.prepare("SELECT manifest_fp, graph_fp, request_fp FROM batches WHERE id='b1'").get() as {
+      manifest_fp: string; graph_fp: string; request_fp: string;
+    };
+    expect(row).toEqual({ manifest_fp: "mfpx", graph_fp: "gfpx", request_fp: "rfpx" });
+    db.close();
   });
 
   it("四张表与恢复/调度用部分索引存在", () => {

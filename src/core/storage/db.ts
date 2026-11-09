@@ -72,6 +72,17 @@ CREATE INDEX idx_jobs_recover ON jobs(status)
 CREATE INDEX idx_jobs_pending ON jobs(batch_id, idx) WHERE status = 'pending';
 CREATE INDEX idx_jobs_retryable ON jobs(batch_id, idx) WHERE status IN ('failed','timeout');
 `
+  },
+  {
+    // v3（Task 005）：工作流版本保护 + 幂等请求指纹。
+    // manifest_fp/graph_fp：batch 创建时的内容指纹快照（NULL=旧数据，跳过校验）；
+    // request_fp：幂等键对应的请求内容指纹（同键不同内容 → IDEMPOTENCY_CONFLICT）。
+    version: 3,
+    sql: `
+ALTER TABLE batches ADD COLUMN manifest_fp TEXT;
+ALTER TABLE batches ADD COLUMN graph_fp TEXT;
+ALTER TABLE batches ADD COLUMN request_fp TEXT;
+`
   }
 ];
 

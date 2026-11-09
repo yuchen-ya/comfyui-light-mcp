@@ -58,7 +58,8 @@ function makeWf(): RegisteredWorkflow {
       "7": { class_type: "KSampler", inputs: { seed: 42, steps: 20 } },
       "9": { class_type: "SaveImage", inputs: { images: ["8", 0] } }
     },
-    sourceFile: "t.manifest.json"
+    sourceFile: "t.manifest.json",
+    fingerprint: { manifest: "fp-manifest-fix", graph: "fp-graph-fix" }
   };
 }
 
@@ -266,6 +267,60 @@ describe("③ AUTO_SAVE_OUTPUTS=false 按需下载", () => {
       engine.stop();
       db.close();
     }
+  });
+});
+
+describe("⑤ 统一中断语义（Task 005 §二.1）", () => {
+  it("timeout 取消过程中的 execution_interrupted 回声 → 保持 timeout（含 remote_cancel），绝不误标 failed/cancelled", async () => {
+    const { store, fake, bus, runner, tracker } = setup({ timeoutMs: 80 });
+    const handle = await runner.submitSingle(makeWf(), { prompt: "hi" });
+    const job = store.getJob(handle.batchId, 0)!;
+    // 模拟真实时序：我们的 interrupt 一到，ComfyUI 广播 execution_interrupted（先于我们 settle）
+    fake.interruptImpl = async (pid) => {
+      bus.publish({ type: "execution_interrupted", data: { prompt_id: pid ?? job.prompt_id! } });
+    };
+    await eventually(() => store.getJob(handle.batchId, 0)!.status === "timeout");
+    const after = store.getJob(handle.batchId, 0)!;
+    expect(after.status).toBe("timeout"); // 不是 failed（旧缺陷），也不是 cancelled
+    const err = JSON.parse(after.error_json!) as {
+      code: string;
+      remote_cancel: { queue_delete: string; interrupt: string };
+    };
+    expect(err.code).toBe("TIMEOUT");
+    expect(err.remote_cancel).toEqual({ queue_delete: "ok", interrupt: "ok" }); // 远端取消结果保留
+    tracker.disposeAll();
+  });
+
+  it("非我方取消的 execution_interrupted（ComfyUI 侧/用户）→ cancelled", async () => {
+    const { store, fake, bus, runner, tracker } = setup();
+    const handle = await runner.submitSingle(makeWf(), { prompt: "hi" });
+    const job = store.getJob(handle.batchId, 0)!;
+    bus.publish({ type: "execution_interrupted", data: { prompt_id: job.prompt_id! } });
+    await eventually(() => store.getJob(handle.batchId, 0)!.status === "cancelled");
+    const err = JSON.parse(store.getJob(handle.batchId, 0)!.error_json!) as { code: string };
+    expect(err.code).toBe("INTERRUPTED");
+    expect(fake.deleteQueueCalls).toEqual([]); // 与我方超时取消无关
+    tracker.disposeAll();
+  });
+
+  it("history 轮询/恢复路径的 interrupted → cancelled（不再是 failed）", async () => {
+    const { store, fake, client, tracker, runner } = setup();
+    const handle = await runner.submitSingle(makeWf(), { prompt: "hi" });
+    const job = store.getJob(handle.batchId, 0)!;
+    fake.history.set(job.prompt_id!, historyEntry({}, "interrupted"));
+    const report = await recoverInFlight({ client, store, assets: new AssetManager(client, outDir), tracker, autoSave: true });
+    expect(report.resolved).toBe(1);
+    expect(store.getJob(handle.batchId, 0)!.status).toBe("cancelled");
+  });
+
+  it("error 仍为 failed（统一后四态互斥：cancelled/timeout/failed/submission_unknown）", async () => {
+    const { store, fake, bus, runner, tracker } = setup();
+    const handle = await runner.submitSingle(makeWf(), { prompt: "hi" });
+    const job = store.getJob(handle.batchId, 0)!;
+    fake.history.set(job.prompt_id!, historyEntry({ "9": { images: [{ filename: "x.png", subfolder: "", type: "output" }] } }, "error"));
+    bus.publish({ type: "execution_error", data: { prompt_id: job.prompt_id!, exception_message: "kernel died" } });
+    await eventually(() => store.getJob(handle.batchId, 0)!.status === "failed");
+    tracker.disposeAll();
   });
 });
 

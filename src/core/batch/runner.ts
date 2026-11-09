@@ -5,6 +5,7 @@ import { applyParams, validateParams, type ParamIssue } from "../workflow/mapper
 import { ComfyLightError } from "../../shared/errors.js";
 import type { BatchStore } from "./store.js";
 import { type JobRow, type JobError } from "./store.js";
+import { requestFingerprint } from "./manager.js";
 import type { JobTracker } from "./tracker.js";
 
 /**
@@ -186,7 +187,10 @@ export class JobRunner {
         total: 1,
         options_json: JSON.stringify({ continue_on_error: true, max_attempts: 1 }),
         created_at: now,
-        finished_at: null
+        finished_at: null,
+        manifest_fp: wf.fingerprint.manifest,
+        graph_fp: wf.fingerprint.graph,
+        request_fp: requestFingerprint(wf, { runs: [{ label, params }] })
       },
       [
         {

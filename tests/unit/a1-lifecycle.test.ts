@@ -56,7 +56,8 @@ function makeWf(graphTemplate?: WorkflowGraph): RegisteredWorkflow {
       "7": { class_type: "KSampler", inputs: { seed: 42 } },
       "9": { class_type: "SaveImage", inputs: { images: ["8", 0] } }
     },
-    sourceFile: "t.manifest.json"
+    sourceFile: "t.manifest.json",
+    fingerprint: { manifest: "fp-manifest-a1", graph: "fp-graph-a1" }
   };
 }
 

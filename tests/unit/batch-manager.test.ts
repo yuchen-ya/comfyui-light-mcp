@@ -31,7 +31,8 @@ const wf: RegisteredWorkflow = {
     "4": { class_type: "TextEncode", inputs: { text: "tpl" } },
     "7": { class_type: "KSampler", inputs: { seed: 42, steps: 20 } }
   },
-  sourceFile: "t.manifest.json"
+  sourceFile: "t.manifest.json",
+  fingerprint: { manifest: "fp-manifest-m", graph: "fp-graph-m" }
 };
 
 let store: BatchStore;
@@ -89,10 +90,11 @@ describe("批量创建", () => {
   });
 
   it("runs 结构错误 → INVALID_RUNS（空数组 / 超上限）", () => {
-    expect(() => manager.createBatch(wf, { runs: [] })).toThrow(ComfyLightError);
-    expect(() =>
-      manager.createBatch(wf, { runs: Array.from({ length: MAX_RUNS_PER_BATCH + 1 }, (_, i) => okRun(i)) })
-    ).toThrow(/超过上限/);
+    expectCode(() => manager.createBatch(wf, { runs: [] }), "INVALID_RUNS");
+    expectCode(
+      () => manager.createBatch(wf, { runs: Array.from({ length: MAX_RUNS_PER_BATCH + 1 }, (_, i) => okRun(i)) }),
+      "INVALID_RUNS"
+    );
   });
 
   it("max_attempts 边界收敛（1..5）并写入 options", () => {
@@ -103,6 +105,17 @@ describe("批量创建", () => {
   });
 });
 
+/** 断言抛出指定 code 的 ComfyLightError */
+function expectCode(fn: () => unknown, code: string): void {
+  try {
+    fn();
+    expect.unreachable(`应抛出 ${code}`);
+  } catch (e) {
+    expect(e).toBeInstanceOf(ComfyLightError);
+    expect((e as ComfyLightError).code).toBe(code);
+  }
+}
+
 describe("幂等键", () => {
   it("同一 idempotency_key 重复调用 → 同一 batch，不新建任何行", () => {
     const r1 = manager.createBatch(wf, { runs: [okRun(0), okRun(1)], idempotencyKey: "batch-request-001" });
@@ -111,10 +124,80 @@ describe("幂等键", () => {
     expect(r2.reused).toBe(true);
     expect(r2.total).toBe(2);
     expect(store.countJobs(r1.batchId)).toBe(2); // 未翻倍
-    expect(manager.createBatch(wf, { runs: [okRun(9)], idempotencyKey: "batch-request-001" }).batchId).toBe(r1.batchId);
     // 不同键 → 新 batch
     const r3 = manager.createBatch(wf, { runs: [okRun(0)], idempotencyKey: "another-key" });
     expect(r3.batchId).not.toBe(r1.batchId);
+  });
+
+  it("同键不同请求内容 → IDEMPOTENCY_CONFLICT（runs/选项变化均触发）", () => {
+    manager.createBatch(wf, { runs: [okRun(0)], idempotencyKey: "k1" });
+    expectCode(() => manager.createBatch(wf, { runs: [okRun(1)], idempotencyKey: "k1" }), "IDEMPOTENCY_CONFLICT");
+    expectCode(
+      () => manager.createBatch(wf, { runs: [okRun(0)], idempotencyKey: "k1", maxAttempts: 3 }),
+      "IDEMPOTENCY_CONFLICT"
+    );
+    expectCode(
+      () => manager.createBatch(wf, { runs: [okRun(0)], idempotencyKey: "k1", continueOnError: false }),
+      "IDEMPOTENCY_CONFLICT"
+    );
+    // 工作流内容变化（指纹不同）同样冲突
+    const wf2 = { ...wf, fingerprint: { manifest: "fp-changed", graph: "fp-changed" } };
+    expectCode(() => manager.createBatch(wf2, { runs: [okRun(0)], idempotencyKey: "k1" }), "IDEMPOTENCY_CONFLICT");
+  });
+
+  it("请求指纹与 JSON 对象键顺序无关（params 键序不同 → 幂等命中）", () => {
+    const a = manager.createBatch(wf, {
+      runs: [{ params: { prompt: "x", seed: 1, steps: 4 } }],
+      idempotencyKey: "k2"
+    });
+    const b = manager.createBatch(wf, {
+      runs: [{ params: { steps: 4, seed: 1, prompt: "x" } }], // 键序打乱
+      idempotencyKey: "k2"
+    });
+    expect(b.batchId).toBe(a.batchId);
+    expect(b.reused).toBe(true);
+  });
+
+  it("runs 顺序敏感：同内容不同顺序 → 冲突", () => {
+    manager.createBatch(wf, {
+      runs: [{ params: { prompt: "a" } }, { params: { prompt: "b" } }],
+      idempotencyKey: "k3"
+    });
+    expectCode(
+      () =>
+        manager.createBatch(wf, {
+          runs: [{ params: { prompt: "b" } }, { params: { prompt: "a" } }],
+          idempotencyKey: "k3"
+        }),
+      "IDEMPOTENCY_CONFLICT"
+    );
+  });
+
+  it("UNIQUE 竞争：并发落库撞键 → 按指纹比对（一致 reused / 不同 conflict）", () => {
+    // 模拟：首个 createBatch 在 INSERT 时撞 UNIQUE（另一请求刚用同键建好同内容 batch）
+    const first = manager.createBatch(wf, { runs: [okRun(0)], idempotencyKey: "race-key" });
+    const storeRef = store;
+    const original = storeRef.createBatchWithJobs.bind(storeRef);
+    (storeRef as unknown as { createBatchWithJobs: unknown }).createBatchWithJobs = () => {
+      throw new Error("UNIQUE constraint failed: batches.idempotency_key");
+    };
+    try {
+      const raced = manager.createBatch(wf, { runs: [okRun(0)], idempotencyKey: "race-key" });
+      expect(raced.batchId).toBe(first.batchId);
+      expect(raced.reused).toBe(true);
+      // 竞争请求内容不同 → conflict
+      expectCode(() => manager.createBatch(wf, { runs: [okRun(5)], idempotencyKey: "race-key" }), "IDEMPOTENCY_CONFLICT");
+    } finally {
+      (storeRef as unknown as { createBatchWithJobs: unknown }).createBatchWithJobs = original;
+    }
+  });
+
+  it("resolveExisting：键命中一致 → reused；不同 → 冲突；未命中 → null", () => {
+    expect(manager.resolveExisting(wf, { runs: [okRun(0)], idempotencyKey: "no-such" })).toBeNull();
+    const created = manager.createBatch(wf, { runs: [okRun(0)], idempotencyKey: "k4" });
+    const hit = manager.resolveExisting(wf, { runs: [okRun(0)], idempotencyKey: "k4" });
+    expect(hit).toMatchObject({ batchId: created.batchId, reused: true });
+    expectCode(() => manager.resolveExisting(wf, { runs: [okRun(1)], idempotencyKey: "k4" }), "IDEMPOTENCY_CONFLICT");
   });
 });
 

@@ -74,7 +74,8 @@ export class Engine {
       registry: this.registry,
       runner: this.runner,
       maxInFlight: config.maxInFlight,
-      maxQueuedJobs: config.maxQueuedJobs
+      maxQueuedJobs: config.maxQueuedJobs,
+      isConnected: () => client.ws.getStats().state === "open"
     });
   }
 
@@ -110,12 +111,18 @@ export class Engine {
 
   /**
    * run_workflow（单 params 简写，P2 兼容）：参数错误抛 ParamsValidationError（先于连通性检查）；
+   * 幂等键命中（指纹一致）→ 直接返回既有 batch，不受连通性影响；不同内容 → IDEMPOTENCY_CONFLICT。
    * 提交走统一调度管线（受双窗口约束，首个 tick 同步执行以保持"立即提交"体验）。
    */
   async runSingle(req: { workflow: string; params: Record<string, unknown>; label?: string; idempotencyKey?: string }): Promise<RunHandleView> {
     const wf = this.resolveWorkflow(req.workflow);
     // 参数校验先于连通性检查：参数错误与 ComfyUI 在线与否无关（错误自愈优先）
     validateParams(wf.manifest, req.params);
+    const early = this.manager.resolveExisting(wf, {
+      runs: [{ label: req.label, params: req.params }],
+      idempotencyKey: req.idempotencyKey
+    });
+    if (early) return { batch_id: early.batchId, index: 0, status: this.store.getJob(early.batchId, 0)?.status ?? "pending" };
     this.assertConnected();
     const created = this.manager.createBatch(wf, {
       runs: [{ label: req.label, params: req.params }],
@@ -131,7 +138,8 @@ export class Engine {
 
   /**
    * run_workflow（runs 数组，批量）：结构性错误抛 ComfyLightError；
-   * 单 run 参数错误 → invalid job（部分容错），合法任务照常执行。
+   * 单 run 参数错误 → invalid job（部分容错），合法任务照常执行；
+   * 幂等键语义同 runSingle（一致 → 既有 batch；不同内容 → IDEMPOTENCY_CONFLICT）。
    */
   async runBatch(req: {
     workflow: string;
@@ -141,12 +149,16 @@ export class Engine {
     maxAttempts?: number;
   }): Promise<BatchHandleView> {
     const wf = this.resolveWorkflow(req.workflow);
-    // 幂等命中先行（只读语义，不受连通性影响）
-    if (req.idempotencyKey) {
-      const existing = this.store.getBatchByIdempotencyKey(req.idempotencyKey);
-      if (existing) {
-        return { batch_id: existing.id, total: existing.total, invalid: this.manager.getBatchView(existing.id, { limit: 1 }).stats.invalid, reused: true, status: existing.status };
-      }
+    // 幂等预检先行（只读语义，不受连通性影响；指纹冲突在此抛出）
+    const early = this.manager.resolveExisting(wf, {
+      runs: req.runs,
+      idempotencyKey: req.idempotencyKey,
+      continueOnError: req.continueOnError,
+      maxAttempts: req.maxAttempts
+    });
+    if (early) {
+      const existing = this.store.getBatch(early.batchId)!;
+      return { batch_id: early.batchId, total: early.total, invalid: early.invalid, reused: true, status: existing.status };
     }
     this.assertConnected();
     const created = this.manager.createBatch(wf, {

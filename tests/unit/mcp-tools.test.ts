@@ -217,6 +217,25 @@ describe("MCP 工具（内存传输）", () => {
       const r2 = text((await client.callTool({ name: "run_workflow", arguments: args })) as never) as { batch_id: string; total: number };
       expect(r2.batch_id).toBe(r1.batch_id);
       expect(fake.submitCalls).toBe(calls1); // 无新提交
+      // 同键不同内容 → IDEMPOTENCY_CONFLICT（isError，自愈提示换键）
+      const conflict = (await client.callTool({
+        name: "run_workflow",
+        arguments: { ...args, params: { prompt: "different", steps: 4, seed: 2 } }
+      })) as never;
+      expect((conflict as ToolRes).isError).toBe(true);
+      expect(JSON.stringify(conflict)).toContain("IDEMPOTENCY_CONFLICT");
+      expect(JSON.stringify(conflict)).toContain("换新键");
+      // 批量路径同样生效
+      const batchConflict = (await client.callTool({
+        name: "run_workflow",
+        arguments: {
+          workflow: "qwen-image-demo",
+          runs: [{ params: { prompt: "x", steps: 4 } }],
+          idempotency_key: "batch-req-001"
+        }
+      })) as never;
+      expect((batchConflict as ToolRes).isError).toBe(true);
+      expect(JSON.stringify(batchConflict)).toContain("IDEMPOTENCY_CONFLICT");
     });
   });
 

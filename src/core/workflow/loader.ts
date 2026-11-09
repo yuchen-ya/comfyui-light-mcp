@@ -25,6 +25,11 @@ export async function loadWorkflowGraph(file: string, dir: string): Promise<Work
   } catch (e) {
     throw new WorkflowFormatError(file, `读取失败: ${e instanceof Error ? e.message : String(e)}`);
   }
+  return parseWorkflowGraph(file, text);
+}
+
+/** 纯解析（registry 已持有原始文本时使用，便于同时计算内容指纹） */
+export function parseWorkflowGraph(file: string, text: string): WorkflowGraph {
   let json: unknown;
   try {
     json = JSON.parse(text);

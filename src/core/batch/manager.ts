@@ -2,15 +2,35 @@ import { randomUUID } from "node:crypto";
 import type { RegisteredWorkflow } from "../workflow/registry.js";
 import { validateParams, type ParamIssue } from "../workflow/mapper.js";
 import { ComfyLightError } from "../../shared/errors.js";
+import { canonicalSha256 } from "../../shared/fingerprint.js";
 import type { BatchStore } from "./store.js";
 import { type BatchRow, type JobRow } from "./store.js";
 
 /**
- * Batch Manager（Task 004 §三）：批量创建与查询，不含调度（Scheduler 负责）。
+ * Batch Manager（Task 004 §三 + Task 005 §二.4 幂等指纹）：批量创建与查询，不含调度。
  * - runs 数组 → 单事务创建 batch + 全部 job 行
  * - 部分参数错误：逐 run 独立校验，非法者落 invalid job（带三段式 issues），合法任务不受影响
- * - 幂等：同 idempotency_key 重复调用返回既有 batch（不建新行、不产生新提交）
+ * - 幂等：同 idempotency_key + 相同请求指纹 → 返回既有 batch；不同请求内容 → IDEMPOTENCY_CONFLICT
  */
+
+/**
+ * 幂等请求指纹（canonical JSON，对象键序无关）：
+ * workflow 名 + 内容指纹 + runs（label+params，保序）+ 归一化的 continue_on_error/max_attempts。
+ */
+export function requestFingerprint(
+  wf: RegisteredWorkflow,
+  req: { runs: RunSpec[]; continueOnError?: boolean; maxAttempts?: number }
+): string {
+  const maxAttempts = Math.min(Math.max(Math.trunc(req.maxAttempts ?? 1), 1), MAX_ATTEMPTS_LIMIT);
+  return canonicalSha256({
+    workflow: wf.manifest.name,
+    manifest_fp: wf.fingerprint.manifest,
+    graph_fp: wf.fingerprint.graph,
+    runs: req.runs.map((r) => ({ label: r.label ?? null, params: r.params })),
+    continue_on_error: req.continueOnError ?? true,
+    max_attempts: maxAttempts
+  });
+}
 
 export const MAX_RUNS_PER_BATCH = 200;
 export const MAX_ATTEMPTS_LIMIT = 5;
@@ -71,15 +91,38 @@ export class BatchManager {
   constructor(private readonly store: BatchStore) {}
 
   /**
+   * 幂等预检（不落库）：键命中且请求指纹一致 → 返回 reused 结果；
+   * 键命中但指纹不同 → IDEMPOTENCY_CONFLICT；未命中 → null。
+   * 供 engine 在连通性检查之前调用（离线重放幂等请求仍可返回既有 batch）。
+   */
+  resolveExisting(wf: RegisteredWorkflow, req: CreateBatchRequest): CreateBatchResult | null {
+    if (!req.idempotencyKey) return null;
+    const existing = this.store.getBatchByIdempotencyKey(req.idempotencyKey);
+    if (!existing) return null;
+    return this.reuseOrConflict(existing, requestFingerprint(wf, req));
+  }
+
+  /** 既有 batch 的指纹比对：一致 → reused；不同 → IDEMPOTENCY_CONFLICT（自愈提示） */
+  private reuseOrConflict(existing: BatchRow, fp: string): CreateBatchResult {
+    if (existing.request_fp && existing.request_fp !== fp) {
+      throw new ComfyLightError(
+        "IDEMPOTENCY_CONFLICT",
+        `idempotency_key "${existing.idempotency_key}" 已绑定另一请求（batch ${existing.id}，指纹 ${existing.request_fp.slice(0, 12)}≠本次 ${fp.slice(0, 12)}）。` +
+          "同一键只允许重放完全相同的请求；内容已变请换新键，或确认 runs/选项与首次一致后重试。"
+      );
+    }
+    return { batchId: existing.id, total: existing.total, invalid: this.countInvalid(existing.id), reused: true };
+  }
+
+  /**
    * 创建 batch（或幂等命中返回既有）。
    * 结构性错误（runs 非法/超限）抛 ComfyLightError；单 run 参数错误 → invalid job。
    */
   createBatch(wf: RegisteredWorkflow, req: CreateBatchRequest): CreateBatchResult {
+    const requestFp = requestFingerprint(wf, req);
     if (req.idempotencyKey) {
       const existing = this.store.getBatchByIdempotencyKey(req.idempotencyKey);
-      if (existing) {
-        return { batchId: existing.id, total: existing.total, invalid: this.countInvalid(existing.id), reused: true };
-      }
+      if (existing) return this.reuseOrConflict(existing, requestFp);
     }
     if (!Array.isArray(req.runs) || req.runs.length === 0) {
       throw new ComfyLightError("INVALID_RUNS", "runs 须为非空数组（单运行可继续用 params 简写）");
@@ -103,7 +146,11 @@ export class BatchManager {
         max_attempts: maxAttempts
       }),
       created_at: now,
-      finished_at: null
+      finished_at: null,
+      // 工作流版本保护（Task 005 §二.2）：创建时的内容指纹快照
+      manifest_fp: wf.fingerprint.manifest,
+      graph_fp: wf.fingerprint.graph,
+      request_fp: requestFp
     };
 
     let invalid = 0;
@@ -143,12 +190,10 @@ export class BatchManager {
     try {
       this.store.createBatchWithJobs(batch, jobs);
     } catch (e) {
-      // UNIQUE(idempotency_key) 并发竞争：另一请求已用同键创建 → 幂等返回
+      // UNIQUE(idempotency_key) 并发竞争：另一请求已用同键创建 → 按指纹比对（一致 reused / 不同 conflict）
       if (req.idempotencyKey && String(e).includes("UNIQUE")) {
         const existing = this.store.getBatchByIdempotencyKey(req.idempotencyKey);
-        if (existing) {
-          return { batchId: existing.id, total: existing.total, invalid: this.countInvalid(existing.id), reused: true };
-        }
+        if (existing) return this.reuseOrConflict(existing, requestFp);
       }
       throw e;
     }

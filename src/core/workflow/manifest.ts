@@ -58,6 +58,63 @@ export const manifestParamSchema = z
     if (p.required && p.default !== undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${where}: required 参数不应再提供 default` });
     }
+    // default 完整校验（Task 005 §二.3）：非法 manifest 拒绝注册（→ LoadReport）
+    if (p.default !== undefined) {
+      const d = p.default;
+      const validateDefault = (ok: boolean, expected: string) => {
+        if (!ok) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${where}: default 非法（实际: ${JSON.stringify(d)}，期望 ${expected}）`
+          });
+        }
+      };
+      switch (p.type) {
+        case "string":
+          validateDefault(typeof d === "string", "string");
+          break;
+        case "boolean":
+          validateDefault(typeof d === "boolean", "boolean");
+          break;
+        case "integer":
+          validateDefault(typeof d === "number" && Number.isInteger(d), "integer");
+          break;
+        case "number":
+          validateDefault(typeof d === "number" && Number.isFinite(d), "number");
+          break;
+        case "enum":
+          validateDefault(typeof d === "string" && (p.enum ?? []).includes(d), `enum 之一: ${(p.enum ?? []).join(", ")}`);
+          break;
+      }
+      const numeric = p.type === "number" || p.type === "integer";
+      if (numeric && typeof d === "number" && Number.isFinite(d)) {
+        if (p.min !== undefined && d < p.min) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${where}: default(${d}) 低于 min(${p.min})` });
+        }
+        if (p.max !== undefined && d > p.max) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${where}: default(${d}) 超过 max(${p.max})` });
+        }
+        if (p.step !== undefined) {
+          const origin = p.min ?? 0;
+          if (Math.abs((d - origin) / p.step - Math.round((d - origin) / p.step)) >= 1e-9) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `${where}: default(${d}) 未对齐 step=${p.step}${p.min !== undefined ? `（相对 min=${p.min}）` : ""}`
+            });
+          }
+        }
+      }
+      // seed 特殊规则：default 只允许 -1（随机哨兵）或 [0, 2^32-1] 的合法种子；
+      // 显式 min 声明（如示例中的 min=-1）时以上通用范围校验已覆盖，此处兜底未声明 min 的情况
+      if (p.special === "seed" && typeof d === "number" && p.min === undefined && p.max === undefined) {
+        if (!(d === -1 || (Number.isInteger(d) && d >= 0 && d <= 4294967295))) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${where}: seed default 须为 -1（随机）或 0–4294967295 的整数（实际: ${JSON.stringify(d)}）`
+          });
+        }
+      }
+    }
   });
 
 export const workflowManifestSchema = z

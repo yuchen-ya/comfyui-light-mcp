@@ -3,14 +3,17 @@ import type { JobRunner } from "./runner.js";
 import type { WorkflowRegistry } from "../workflow/registry.js";
 
 /**
- * Scheduler（Task 004 §四）：双窗口调度器。
+ * Scheduler（Task 004 §四 + Task 005 加固）：双窗口调度器。
  * - MAX_IN_FLIGHT：全局在途上限（submitting/submission_unknown/queued/executing——unknown 占额，
  *   因为它可能仍在远端执行；这也是"宁可保留 unknown 也不重复生成"的窗口层落实）
  * - MAX_QUEUED_JOBS：ComfyUI 排队态（queued）上限，须 ≤ MAX_IN_FLIGHT
  * - 每个 tick：① 重试重置（failed/timeout 且次数未用尽 → pending）
- *              ② continue_on_error=false 级联放弃
- *              ③ 在窗口内按（batch 创建时间, index）顺序提交 pending job
+ *              ② continue_on_error=false 级联放弃（仅终态失败触发，先重试后级联）
+ *              ③ 工作流版本指纹校验（变更 → 旧 batch 的 pending 拒绝执行）
+ *              ④ 在窗口内按（batch 创建序, index）顺序提交 pending job（连接可用时）
  * - 防重复提交：ticking 互斥 + store.claimForSubmit 条件占位（`WHERE status='pending'`）双保险
+ * - 连接门控（Task 005 §三）：isConnected() 为 false 时暂停提交——pending 原地等待，
+ *   绝不在断连期间把提交打成 submission_unknown（重连后自动续跑）
  */
 
 const DEFAULT_TICK_MS = 500;
@@ -22,6 +25,8 @@ export interface SchedulerDeps {
   maxInFlight: number;
   maxQueuedJobs: number;
   tickMs?: number;
+  /** 提交前连接检查（缺省视为始终可用）；WS 断开时 pending 保持待提交 */
+  isConnected?: () => boolean;
 }
 
 export class Scheduler {
@@ -60,6 +65,10 @@ export class Scheduler {
     try {
       this.processRetries();
       this.abortOnErrorPolicy();
+      this.verifyWorkflowVersions();
+      // 连接门控：ComfyUI 不可达时暂停提交（pending 原地等待，重连后自动续跑）——
+      // 避免断连期间提交被打成 submission_unknown 并永久占用在途额度
+      if (this.deps.isConnected && !this.deps.isConnected()) return;
       // 提交循环：每次提交后重新计数（提交结果即刻反映到窗口）；
       // 每轮重查 stop 策略——本 tick 内刚失败的任务可立即拦下同 batch 的后续提交
       for (let guard = 0; guard < 10_000; guard++) {
@@ -109,6 +118,26 @@ export class Scheduler {
         "batch 内已有失败任务且 continue_on_error=false，剩余任务被放弃"
       );
       if (n > 0) this.finalizeBatch(batchId);
+    }
+  }
+
+  /**
+   * 工作流版本指纹校验（Task 005 §二.2）：batch 创建后工作流内容变更 →
+   * 旧 batch 的 pending job 拒绝执行（cancelled + WORKFLOW_VERSION_MISMATCH），
+   * 绝不静默用新版本继续旧 batch；不影响其他 batch；在途 job 不受影响（已按旧版提交，照常对账）。
+   */
+  private verifyWorkflowVersions(): void {
+    for (const snap of this.deps.store.pendingBatchSnapshots()) {
+      if (!snap.manifest_fp || !snap.graph_fp) continue; // 旧数据（v3 前创建）：跳过校验
+      const wf = this.deps.registry.get(snap.workflow);
+      if (!wf) continue; // 工作流消失走提交循环的 WORKFLOW_GONE 路径
+      if (wf.fingerprint.manifest === snap.manifest_fp && wf.fingerprint.graph === snap.graph_fp) continue;
+      const n = this.deps.store.abortPendingJobs(
+        snap.id,
+        `工作流 "${snap.workflow}" 自 batch 创建后已变更（manifest ${snap.manifest_fp.slice(0, 8)}→${wf.fingerprint.manifest.slice(0, 8)}，graph ${snap.graph_fp.slice(0, 8)}→${wf.fingerprint.graph.slice(0, 8)}）。拒绝用新版本执行旧 batch 的剩余任务；请用当前工作流重新提交。`,
+        "WORKFLOW_VERSION_MISMATCH"
+      );
+      if (n > 0) this.finalizeBatch(snap.id);
     }
   }
 

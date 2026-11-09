@@ -19,6 +19,8 @@ export interface FakeHttpState {
   deleteQueueImpl?: (promptIds: string[]) => Promise<void>;
   downloads: Map<string, Buffer>;
   downloadCalls: number;
+  /** 模拟 WS 连接状态（engine.assertConnected / scheduler 连接门控用，可变） */
+  wsState: "open" | "closed";
   /** 向真实事件总线发布该 prompt 的成功事件（驱动 tracker 定终态） */
   publishSuccess: (promptId: string) => void;
 }
@@ -35,6 +37,7 @@ export function makeFakeClient(): { client: ComfyClient; state: FakeHttpState; b
     deleteQueueCalls: [],
     downloads: new Map(),
     downloadCalls: 0,
+    wsState: "open",
     publishSuccess: (promptId: string) => {
       bus.publish({ type: "execution_success", data: { prompt_id: promptId } });
     }
@@ -75,7 +78,7 @@ export function makeFakeClient(): { client: ComfyClient; state: FakeHttpState; b
         return new Response(new Uint8Array(buf), { status: 200 });
       }
     } as never,
-    ws: { getStats: () => ({ state: "open" }) } as never,
+    ws: { getStats: () => ({ state: state.wsState }) } as never,
     start: async () => {},
     stop: () => {}
   };

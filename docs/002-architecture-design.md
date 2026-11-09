@@ -225,11 +225,12 @@ export class JobRunner {
 //   maxInFlight（默认 1）：在途上限 = 状态 ∈ {submitting, submission_unknown, queued, executing} 的 job 数
 //     —— 限制对 ComfyUI 的总未决提交量；submission_unknown 占额（它可能仍在远端执行）
 //   maxQueuedJobs（默认 1）：排队上限 = 状态 ∈ {queued} 的 job 数 —— 限制占用 ComfyUI 队列深度
-//   提交条件：inFlight < maxInFlight 且 queued < maxQueuedJobs；
+//   提交条件：inFlight < maxInFlight 且 queued < maxQueuedJobs 且 isConnected()（Task 005 连接门控）；
 //   取件顺序：全局 FIFO（batch 创建序 rowid，batch 内按 idx；created_at 同毫秒也稳定）
 //   每个 tick：① 重试重置（failed/timeout 且 attempt_no<max_attempts → pending；unknown 永不重试）
-//              ② continue_on_error=false 级联放弃（且在提交循环内每轮重查——同 tick 内刚失败立即拦下后续）
-//              ③ 窗口内逐个提交（ticking 互斥 + 条件占位双保险，tick 并发不重复提交同一 job）
+//              ② continue_on_error=false 级联放弃（仅终态失败触发；提交循环内每轮重查）
+//              ③ 工作流版本指纹校验（变更 → 旧 batch 的 pending → cancelled/WORKFLOW_VERSION_MISMATCH）
+//              ④ 窗口内逐个提交（ticking 互斥 + 条件占位双保险，tick 并发不重复提交同一 job）
 export class Scheduler {
   ensureStarted(): void;   // 周期 500ms 定时器（unref）+ 立即一拍
   stop(): void;
@@ -261,6 +262,7 @@ export class Engine {
 - **工作流文件**：ComfyUI 原生导出的 **API 格式 JSON**（用户已测试过的即用），命名 `foo-api.json`，**Agent 永远拿不到修改整图的能力**。
 - **manifest 文件**：`foo.manifest.json`，与工作流文件同目录成对存在。显式声明 Agent 可改的参数白名单（类型/默认/枚举/范围/seed 语义）。`workflows/examples/` 提供完整示例。
 - **default 语义（Task 004 §二.4 明确）**：参数显式提供 → 用提供值；未提供但 manifest 有 default → 用 default 值；两者皆无 → 保留工作流模板原值。`resolved_json` 记录全部 manifest 参数的实际生效值（含模板原值），保证可复现。
+- **default 完整校验（Task 005 §二.3）**：manifest 加载即校验 default——类型正确、满足 min/max、对齐 step、enum default 在合法值内、seed default 符合特殊规则（-1 随机或 0–2³²-1 整数）；非法 manifest 拒绝注册并落入 LoadReport（不抛出，Agent 可见文件级错误）。
 - 禁止项落实为机制：`run_workflow` 的参数只经 manifest 白名单校验后定点覆写（mapper），不存在"提交任意 JSON"通道（metabrain 的 `queue_custom_prompt` 不移植）。
 - manifest 手写成本控制：提供 `scripts/` 下的 manifest 生成辅助（Phase 2 可选：从 API JSON 列出候选节点/输入供人挑选），**不做自动全量参数暴露**（metabrain 教训：`=>` 节点全输入暴露 + typeof 四类推断不可靠，审计 §1.2）。
 
@@ -320,19 +322,33 @@ CREATE INDEX idx_jobs_pending   ON jobs(batch_id, idx) WHERE status = 'pending';
 CREATE INDEX idx_jobs_retryable ON jobs(batch_id, idx) WHERE status IN ('failed','timeout');
 ```
 
+**迁移 v3（Task 005）**：工作流版本保护 + 幂等请求指纹（batches 新列；旧行为 NULL，跳过版本校验）：
+
+```sql
+ALTER TABLE batches ADD COLUMN manifest_fp TEXT;  -- 创建时 manifest 内容 sha256
+ALTER TABLE batches ADD COLUMN graph_fp    TEXT;  -- 创建时 API JSON 内容 sha256
+ALTER TABLE batches ADD COLUMN request_fp  TEXT;  -- 幂等请求指纹（canonical JSON sha256）
+```
+
 ### 6.2 状态机
 
 ```
 Job:   pending ─→ submitting ─→ queued ─→ executing ─┬→ succeeded
           ↑            │            │        │        ├→ failed     ─(attempt_no<max)─→ pending（重试）
-          │            │            │        │        ├→ timeout    ─(同上，先 interrupt)
-          │            │            │        │        └→ cancelled
+          │            │            │        │        ├→ timeout    ─(同上；我方取消的 interrupted 回声被 cancelling 拦截)
+          │            │            │        │        └→ cancelled  （用户/ComfyUI 侧 interrupt；版本失配放弃）
           │            ↓            ↓        ↓
           │      submission_unknown ─┬→ (恢复时在 /queue 或 /history 中找到) → queued/executing/终态，继续跟踪
           │                          └→ (两处均无) → **保持 submission_unknown**（Task 003 A1 确认：
           │                             不伪装 failed、不自动重提；get_batch 原样区分；batch 视为未决=running）
           └→ invalid（参数校验失败，创建时即定，终态，不占提交窗口）
         （提交抛错/网络失败）（/queue 中）（WS executing）（终态；WS+history 双确认）
+
+统一中断语义（Task 005 §二.1，四态互斥）：
+  用户主动取消（ComfyUI 侧 interrupt 事件/history interrupted，非我方发起） → cancelled
+  执行超时（我方组合取消；取消窗口内的 interrupted 回声不覆盖 timeout，remote_cancel 保留） → timeout
+  ComfyUI 执行失败（execution_error / history error） → failed
+  提交结果不确定（POST 后网络失败/崩溃，恢复双查无果） → submission_unknown（占在途额度，不重提）
 
 Batch: running ─┬→ completed   （全部 succeeded）
                 ├→ partial     （成功与 invalid/failed/timeout/submission_unknown 并存）
@@ -343,13 +359,22 @@ Batch: running ─┬→ completed   （全部 succeeded）
 规则：
 
 - **部分容错（已确认决策，Task 004 已实现）**：参数校验失败的 run **不阻塞整批**——合法 run 正常创建提交，非法 run 以 `invalid` 终态独立落库（error 含逐字段三段式 issues），batch 汇总中计入失败侧。`run_workflow`（runs 数组）响应带 `invalid` 计数，明细经 get_batch(status=invalid) 获取。
-- **失败隔离（已实现）**：单 job 失败不影响 batch 内其他 job（默认 `continue_on_error=true`；false 时首个终态失败级联放弃剩余 pending → cancelled/BATCH_ABORTED，且调度器在同一 tick 内立即拦截后续提交）。
-- **重试（已实现）**：仅对 `failed/timeout` 且 `attempt_no < max_attempts`（默认 1 即不重试，上限 5；`submission_unknown` 永不自动重试）。每次尝试全新 prompt_id + 独立 `job_attempts` 行，历史只增不改；重试未用尽期间 batch 视为未决（保持 running）。
+- **失败隔离（已实现）**：单 job 失败不影响 batch 内其他 job（默认 `continue_on_error=true`）。
+- **continue_on_error=false × max_attempts>1 组合语义（Task 005 §二.5 明确）**：
+  1. 失败**先重试**——attempt 未耗尽的 failed/timeout 只触发重置 pending 重跑，不级联（重试同样受双窗口约束，需等窗口）；
+  2. **终态失败才级联**——重试耗尽的 failed/timeout 或 invalid 成立即取消剩余 pending（cancelled/BATCH_ABORTED），调度器同 tick 内拦截后续提交；
+  3. **已在途的 job 继续执行**——已提交的 queued/executing 不做远程取消，结果照常对账保留；
+  4. **尚未提交的 job → cancelled**。
+- **重试（已实现）**：仅对 `failed/timeout` 且 `attempt_no < max_attempts`（默认 1 即不重试，上限 5；`submission_unknown` 永不自动重试）。每次尝试全新 prompt_id + 独立 `job_attempts` 行（终态回写），历史只增不改；重试未用尽期间 batch 视为未决（保持 running）。
 - **submission_unknown（Task 003 A1 最终语义，已实测落地）**：`submitting` 态遇网络失败/进程崩溃 → 入 `submission_unknown`。**prompt_id 在提交动作之前已持久化**（runner 固定顺序：生 id → 事务落库（含 attempt 行）→ POST），因此恢复时总是可查证。恢复判定：能查到（`/queue` 或 `/history/{prompt_id}`）→ 继续跟踪或定终态；**两处皆无 → 保持 submission_unknown 状态原样**——不伪装成 failed、不自动重提（0.41 实测同 prompt_id 重提会重复执行，docs/003 F2）、get_batch 单列 `unknown` 统计、batch 状态视为未决（保持 running）、**持续占用 MAX_IN_FLIGHT 在途额度**（它可能仍在远端执行——窗口层落实"宁可保留 unknown 也不重复生成"）。
 - **timeout（Task 004 §二.2 修订，已实现）**：触发时先向 ComfyUI 发送**组合取消**——`POST /queue {delete:[id]}`（移除排队项）+ `POST /interrupt {prompt_id}`（终止执行项）。两动作对"错误状态"均为已验证的无害 no-op（docs/003 F5），组合发送无竞态空窗（任务恰在两动作间由 queued 转 executing 也被覆盖）。取消期间 job 若已由事件定终态，以先到者为准（不覆盖）。远端取消结果（ok/error 明细）记入 error_json.remote_cancel。绝不静默超时（metabrain 缺陷：超时后远端继续跑，审计 §1.3）。
 - **History 终态优先级（Task 004 §二.1 修订，已实现）**：`error/interrupted` 判定**优先于** outputs 存在性——error 绝不因存在部分 outputs 被判 succeeded（tracker 轮询、settleFromHistory 守卫、recovery 三处统一走 `historyVerdict`）。
-- **幂等性（已实现）**：
-  - batch 级：`idempotency_key` 唯一约束，重复 create 返回既有 batch（24h TTL 内）。
+- **幂等性（Task 005 §二.4 升级为指纹比对）**：
+  - batch 级：`idempotency_key` 唯一约束 + **请求指纹**（canonical JSON，对象键序无关；涵盖 workflow 名/内容指纹/runs 内容与顺序/continue_on_error/max_attempts）。
+  - 同键**相同请求** → 返回既有 batch（reused，零新提交；离线重放亦成立——预检先于连通性检查）；
+  - 同键**不同请求** → `IDEMPOTENCY_CONFLICT`（自愈提示换键或核对内容）；并发 UNIQUE 竞争同规则裁决。
+- **工作流版本保护（Task 005 §二.2，已实现）**：batch 创建即快照 manifest/graph 内容指纹（sha256，registry 注册时计算）。调度器每拍对含 pending 的 batch 校验指纹——**内容变更 → 旧 batch 的 pending 拒绝执行**（cancelled + `WORKFLOW_VERSION_MISMATCH`，绝不静默用新版本继续旧 batch）；在途 job 不受影响（已按旧版提交，照常对账）；其他 batch 不受影响；v3 前旧行（NULL 指纹）跳过校验。完整 workflow JSON 绝不复制进 job/batch 行，只存 32 字节指纹。
+- **连接门控（Task 005 §三，已实现）**：调度器提交前检查 WS 连接——ComfyUI 不可达时 pending 原地等待（**不产生 submission_unknown**，断连 ≠ 提交结果未知），重连后自动续跑；恢复/重试/级联等本地对账不受门控影响。
   - job 级：`(batch_id, idx)` 唯一；`submission_unknown` 查证流程见上，不做盲目双提交。
 - **结果关联**：`executed` 事件 + `/history/{prompt_id}` 双通道收获 outputs（images/gifs/音频均收，metabrain 只认 images，审计 §1.3），统一转 `OutputRef{filename, subfolder, type, kind}` 落库。
 - **输出落盘（已确认决策，Task 004 完成按需下载）**：`AUTO_SAVE_OUTPUTS=true`（默认）时 job 终态成功即经 `/view` 下载到 `OUTPUT_DIR/<batch_id>/<idx>/<filename>`（重名自动加序号），`OutputRef.local_path` 记录绝对路径；false 时结算只存引用（kind+filename），`get_result(download=true)`（默认）按需下载并持久化（幂等，`download:false` 只读引用）。
@@ -442,7 +467,7 @@ Batch: running ─┬→ completed   （全部 succeeded）
 | **P1 Client+总线** | comfy-http/comfy-ws/event-bus、重连、二进制帧跳过；`smoke-real-comfyui.ts` 验证 Q1/Q2 全部假设 | 冒烟脚本对本机 ComfyUI 提交→等完→收 outputs 全通 | 1–2d | ✅（11/11，docs/003） |
 | **P2 工作流+MVP** | registry/manifest/mapper + `list_workflows`/`run_workflow`(runs 长度 1)/`get_result`（不落盘）；examples 工作流对 | Agent 经 3 工具端到端出 1 张图 | 2–3d | ✅（115 测试 + 真实 e2e + Inspector，docs/004） |
 | **P3 Batch/Job** | BatchManager/Scheduler 双窗口、get_batch、失败隔离、重试、幂等键、P2 遗留修复（终态优先级/超时取消组合/按需下载/default 语义） | 10 runs 批量（混入 2 个非法 combo + 1 个 manifest 非法）失败隔离正确；重启不丢状态 | 2–3d | ✅（157 测试 + 真实 10 任务批量，docs/005） |
-| **P4 恢复+硬化** | recovery 批量场景加固、cancel_batch 辅助工具、save_dir path-jail 集成、upload_asset、错误分类打磨 | 批量执行中途 kill 重启恢复；取消工具可用 | 1–2d |
+| **P4 恢复+硬化** | recovery 批量场景加固、cancel_batch 辅助工具、save_dir path-jail 集成、upload_asset、错误分类打磨 | 批量执行中途 kill 重启恢复；取消工具可用 | 1–2d | P4.1（Task 005）✅：统一中断语义/版本指纹保护/manifest default 校验/幂等指纹冲突/组合语义/连接门控+8 项恢复测试（183 测试，docs/006）；P4.2 余项：cancel_batch 工具、upload_asset、save_dir |
 | **P5 发布准备** | README(中英)、npx 入口、使用文档（manifest 编写指南） | 新机器按文档 10 分钟跑通 | 0.5–1d |
 
 依赖关系：P1→P2→P3→P4 严格串行；P0 独立。合计约 7–11 个工作日。

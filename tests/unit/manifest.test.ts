@@ -76,6 +76,77 @@ describe("manifest 解析", () => {
   });
 });
 
+describe("default 完整校验（Task 005 §二.3）", () => {
+  function withParam(p: Record<string, unknown>) {
+    return JSON.stringify({ ...VALID_MANIFEST, params: [p] });
+  }
+
+  it("合法 default 全类型通过（string/number/integer/boolean/enum/seed）", () => {
+    expect(() => parseManifest("a.json", JSON.stringify(VALID_MANIFEST))).not.toThrow();
+  });
+
+  it("类型错误被拒：string 传 number / boolean 传 string / integer 传小数与字符串", () => {
+    expect(() => parseManifest("a.json", withParam({ name: "p", node: "4", input: "text", type: "string", default: 42 })))
+      .toThrow(/default 非法.*期望 string/);
+    expect(() => parseManifest("a.json", withParam({ name: "p", node: "8", input: "tiled", type: "boolean", default: "yes" })))
+      .toThrow(/default 非法.*期望 boolean/);
+    expect(() => parseManifest("a.json", withParam({ name: "p", node: "7", input: "steps", type: "integer", default: 1.5 })))
+      .toThrow(/default 非法.*期望 integer/);
+    expect(() => parseManifest("a.json", withParam({ name: "p", node: "7", input: "steps", type: "integer", default: "20" })))
+      .toThrow(/default 非法/);
+  });
+
+  it("min/max 违反被拒（低于 min / 超过 max）", () => {
+    expect(() => parseManifest("a.json", withParam({ name: "p", node: "7", input: "steps", type: "integer", min: 1, max: 100, default: 0 })))
+      .toThrow(/default\(0\) 低于 min\(1\)/);
+    expect(() => parseManifest("a.json", withParam({ name: "p", node: "7", input: "steps", type: "integer", min: 1, max: 100, default: 101 })))
+      .toThrow(/default\(101\) 超过 max\(100\)/);
+  });
+
+  it("step 未对齐被拒（对齐示例通过）", () => {
+    expect(() => parseManifest("a.json", withParam({ name: "p", node: "7", input: "cfg", type: "number", min: 1, step: 0.5, default: 1.3 })))
+      .toThrow(/未对齐 step=0.5/);
+    expect(() => parseManifest("a.json", withParam({ name: "p", node: "7", input: "cfg", type: "number", min: 1, step: 0.5, default: 1.5 })))
+      .not.toThrow();
+  });
+
+  it("enum default 必须在合法值中", () => {
+    expect(() => parseManifest("a.json", withParam({ name: "p", node: "1", input: "ckpt", type: "enum", enum: ["a", "b"], default: "c" })))
+      .toThrow(/default 非法.*enum 之一: a, b/);
+    expect(() => parseManifest("a.json", withParam({ name: "p", node: "1", input: "ckpt", type: "enum", enum: ["a", "b"], default: "a" })))
+      .not.toThrow();
+  });
+
+  it("seed 特殊规则：-1（随机）与 0–2^32-1 合法；越界/非整数被拒", () => {
+    expect(() => parseManifest("a.json", withParam({ name: "s", node: "7", input: "seed", type: "integer", special: "seed", default: -1 })))
+      .not.toThrow();
+    expect(() => parseManifest("a.json", withParam({ name: "s", node: "7", input: "seed", type: "integer", special: "seed", default: 4294967295 })))
+      .not.toThrow();
+    expect(() => parseManifest("a.json", withParam({ name: "s", node: "7", input: "seed", type: "integer", special: "seed", default: -2 })))
+      .toThrow(/seed default/);
+    expect(() => parseManifest("a.json", withParam({ name: "s", node: "7", input: "seed", type: "integer", special: "seed", default: 4294967296 })))
+      .toThrow(/seed default/);
+    expect(() => parseManifest("a.json", withParam({ name: "s", node: "7", input: "seed", type: "integer", special: "seed", default: 1.5 })))
+      .toThrow(/default 非法.*integer/);
+  });
+
+  it("非法 default 的 manifest 经 registry.load 落入 LoadReport 而非抛出", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "wf-def-"));
+    await writeFile(path.join(dir, "demo.json"), JSON.stringify(VALID_GRAPH));
+    await writeFile(
+      path.join(dir, "bad.manifest.json"),
+      JSON.stringify({ ...VALID_MANIFEST, params: [{ name: "steps", node: "7", input: "steps", type: "integer", min: 1, max: 100, default: 999 }] })
+    );
+    const { WorkflowRegistry } = await import("../../src/core/workflow/registry.js");
+    const reg = new WorkflowRegistry(dir);
+    const report = await reg.load();
+    expect(report.loaded).toEqual([]);
+    expect(report.errors).toHaveLength(1);
+    expect(report.errors[0]!.message).toMatch(/default\(999\) 超过 max\(100\)/);
+    expect(reg.get("demo")).toBeUndefined(); // 未注册
+  });
+});
+
 describe("workflow loader", () => {
   it("API 格式通过并规范化", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "wf-"));
