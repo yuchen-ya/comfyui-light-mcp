@@ -1,6 +1,8 @@
 # 隐私与密钥（严禁提交）
 .env
 .env.*
+config.env
+*.tgz
 *.key
 *.pem
 *.pfx

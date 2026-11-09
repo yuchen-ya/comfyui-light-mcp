@@ -1,3 +1,5 @@
+// Adapted from MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript (MIT), commit 765c713
+// Copyright (c) 2026 MetaBrain-Labs. See THIRD_PARTY_LICENSES.txt.
 import { ComfyLightError, toComfyUnreachable } from "../../shared/errors.js";
 import { clipTail } from "../../shared/truncate.js";
 import type {

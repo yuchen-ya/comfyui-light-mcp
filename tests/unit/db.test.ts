@@ -7,6 +7,53 @@ import { openDb } from "../../src/core/storage/db.js";
 import { legacyDb } from "../helpers/legacy-db.js";
 
 describe("storage db", () => {
+  it("v1 disk database preserves existing data through v2-v5 and reopening", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "migration-v1-"));
+    const file = path.join(dir, "legacy.db");
+    const old = legacyDb(file, "v2");
+    old.exec("DROP INDEX idx_jobs_pending; DROP INDEX idx_jobs_retryable");
+    old.pragma("user_version = 1");
+    old.prepare("INSERT INTO kv (key,value) VALUES (?,?)").run("existing", "preserved");
+    old.close();
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const db = openDb(file);
+        try {
+          expect(db.pragma("user_version", { simple: true })).toBe(5);
+          expect(db.prepare("SELECT value FROM kv WHERE key='existing'").get()).toEqual({ value: "preserved" });
+          expect(db.prepare("SELECT name FROM sqlite_master WHERE name='idx_jobs_pending'").get()).toBeDefined();
+          expect(db.pragma("integrity_check")).toEqual([{ integrity_check: "ok" }]);
+          expect(db.pragma("foreign_key_check")).toEqual([]);
+        } finally {
+          db.close();
+        }
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a newer schema without altering its version or stored data", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "migration-newer-"));
+    const file = path.join(dir, "newer.db");
+    const db = openDb(file);
+    db.prepare("INSERT INTO kv (key,value) VALUES (?,?)").run("existing", "preserved");
+    db.pragma("user_version = 6");
+    db.close();
+    try {
+      expect(() => openDb(file)).toThrow(/Unsupported database schema v6/);
+      const newer = new Database(file, { readonly: true });
+      try {
+        expect(newer.pragma("user_version", { simple: true })).toBe(6);
+        expect(newer.prepare("SELECT value FROM kv WHERE key='existing'").get()).toEqual({ value: "preserved" });
+      } finally {
+        newer.close();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each([4, 5])("schema v%s gains a persistent guard that rejects legacy writes and permits main after reopening", async (version) => {
     const dir = await mkdtemp(path.join(tmpdir(), "writer-guard-"));
     const file = path.join(dir, "guard.db");

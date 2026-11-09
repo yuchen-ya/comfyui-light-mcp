@@ -48,8 +48,8 @@ describe("参数校验器", () => {
   });
 
   it("类型不匹配报错（integer 传字符串 / number 传 NaN）", () => {
-    expect(() => validateParams(manifest, { prompt: "x", steps: "30" })).toThrow(/Expected number/);
-    expect(() => validateParams(manifest, { prompt: "x", steps: 1.5 })).toThrow(/Expected int/);
+    expect(() => validateParams(manifest, { prompt: "x", steps: "30" })).toThrow(/expected number/i);
+    expect(() => validateParams(manifest, { prompt: "x", steps: 1.5 })).toThrow(/expected int/i);
   });
 
   it("范围与步长：min/max/step（消息含实际值）", () => {

@@ -1,4 +1,5 @@
-// 类型定义参考了 MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript (MIT), commit 765c713
+// Adapted from MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript (MIT), commit 765c713
+// Copyright (c) 2026 MetaBrain-Labs. See THIRD_PARTY_LICENSES.txt.
 // 的 src/types/*，并按本项目需要改编。字段形状以真实环境验证为准（docs/003）。
 
 /** ComfyUI API 格式工作流图：nodeId → node */

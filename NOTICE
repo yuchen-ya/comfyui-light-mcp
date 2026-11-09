@@ -12,6 +12,7 @@ Third-party code adapted into this repository:
      "// Adapted from MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript (MIT), commit 765c713".
    - Such adaptations retain the original copyright notice:
      Copyright (c) 2026 MetaBrain-Labs
+   - Full original license text is also included in THIRD_PARTY_LICENSES.txt.
    - Original license text:
      https://github.com/MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript/blob/main/LICENSE
 
@@ -23,5 +24,9 @@ Third-party code adapted into this repository:
    benchmarks/third-party/comfy-mcp/; these captures are not presented as
    original MIT-licensed implementation code.
 
-Runtime dependencies (each governed by its own license, not merged into this
-source tree): better-sqlite3 (MIT), ws (MIT), zod (MIT).
+Direct runtime dependencies (each governed by its own license, retained in its
+installed npm package): @modelcontextprotocol/sdk (MIT), better-sqlite3 (MIT),
+ws (MIT), zod (MIT). better-sqlite3 embeds SQLite (public domain).
+The audited transitive dependency license inventory is maintained in the
+source repository at docs/010-task008-dependency-licenses.json. Dependency
+licenses are not replaced by this project's MIT license.

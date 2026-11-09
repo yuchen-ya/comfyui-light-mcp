@@ -1,0 +1,11 @@
+{
+  "name": "solid-color",
+  "description": "Model-free installation check using built-in ComfyUI nodes",
+  "version": 1,
+  "workflowFile": "solid-color.json",
+  "params": [
+    { "name": "color", "node": "1", "input": "color", "type": "integer", "min": 0, "max": 16777215, "default": 255, "description": "Packed RGB color (0xRRGGBB)" },
+    { "name": "width", "node": "1", "input": "width", "type": "integer", "min": 16, "max": 4096, "step": 8, "default": 64 },
+    { "name": "height", "node": "1", "input": "height", "type": "integer", "min": 16, "max": 4096, "step": 8, "default": 64 }
+  ]
+}

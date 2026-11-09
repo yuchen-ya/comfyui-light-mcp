@@ -5,6 +5,7 @@ import { ParamsValidationError } from "../core/workflow/mapper.js";
 import { ComfyLightError } from "../shared/errors.js";
 import { renderBounded } from "../shared/truncate.js";
 import { INSTRUCTIONS } from "./instructions.js";
+import { VERSION } from "../version.js";
 
 /**
  * MCP Interface（唯一依赖 MCP SDK 的层，docs/002 §1）。
@@ -35,7 +36,7 @@ function toolError(e: unknown) {
 
 export function createMcpServer(engine: Engine): McpServer {
   const server = new McpServer(
-    { name: "comfyui-light-mcp", version: "0.3.0" },
+    { name: "comfyui-light-mcp", version: VERSION },
     { instructions: INSTRUCTIONS }
   );
 

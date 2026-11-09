@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { loadConfig } from "./config.js";
@@ -39,6 +40,27 @@ async function main(): Promise<void> {
 
   const server = createMcpServer(engine);
   await server.connect(new StdioServerTransport());
+  let stopping = false;
+  const shutdown = async (): Promise<void> => {
+    if (stopping) return;
+    stopping = true;
+    try {
+      await server.close();
+      await engine.stop();
+    } finally {
+      client.stop();
+      db.close();
+    }
+  };
+  const onShutdown = (): void => {
+    void shutdown().catch((error: unknown) => {
+      console.error("关闭失败:", error);
+      process.exitCode = 1;
+    });
+  };
+  process.stdin.once("end", onShutdown);
+  process.once("SIGINT", onShutdown);
+  process.once("SIGTERM", onShutdown);
   console.error(`[mcp] stdio server ready (workflows=${report.loaded.length}, comfyui=${connected ? "connected" : "unreachable"})`);
 }
 
