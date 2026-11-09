@@ -74,6 +74,7 @@ export class Scheduler {
       await this.deps.beforeTick?.();
       if (generation !== this.generation) return;
       if (this.deps.isConnected && !this.deps.isConnected()) return;
+      if (this.deps.registry.executionConfirmed?.() === false) return;
       this.reconcileWorkflowDrift();
       this.processRetries();
       this.abortOnErrorPolicy();
@@ -90,6 +91,16 @@ export class Scheduler {
         const held = this.deps.store.heldPendingBatches();
         const next = this.deps.store.nextPendingJob(held);
         if (!next) break;
+        const state = this.deps.registry.statusOf?.(next.workflow);
+        if (state?.status === "invalid") {
+          const n = this.deps.store.pauseBatchPendingJobs(
+            next.job.batch_id,
+            `WORKFLOW_INVALID: 当前工作流文件无效（${state.error?.message ?? "未知加载错误"}）。剩余任务已暂停；不会回退到旧版本提交。`,
+            "WORKFLOW_INVALID"
+          );
+          if (n > 0) this.finalizeBatch(next.job.batch_id);
+          continue;
+        }
         const wf = this.deps.registry.get(next.workflow);
         if (!wf) {
           // batch 创建后工作流被移除/失效：落 invalid（部分容错，不阻断其他 batch）
@@ -171,6 +182,7 @@ export class Scheduler {
     for (const batchId of this.deps.store.pausedBatches()) {
       const batch = this.deps.store.getBatch(batchId);
       if (!batch) continue;
+      if (this.deps.registry.statusOf?.(batch.workflow)?.status === "invalid") continue;
       const wf = this.deps.registry.get(batch.workflow);
       if (!wf) continue;
       const mismatch = fingerprintMismatch(

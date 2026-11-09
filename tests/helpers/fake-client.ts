@@ -1,6 +1,6 @@
 import { ComfyEventBus } from "../../src/core/client/event-bus.js";
 import type { ComfyClient } from "../../src/core/client/index.js";
-import type { HistoryEntry, SubmitResult, WorkflowGraph } from "../../src/core/client/types.js";
+import type { HistoryEntry, ObjectInfoNode, SubmitResult, WorkflowGraph } from "../../src/core/client/types.js";
 
 /**
  * 离线测试用 ComfyClient 替身：真实事件总线 + 可编程 http 行为。
@@ -19,6 +19,8 @@ export interface FakeHttpState {
   deleteQueueImpl?: (promptIds: string[]) => Promise<void>;
   downloads: Map<string, Buffer>;
   downloadCalls: number;
+  objectInfoCalls: number;
+  objectInfoImpl: () => Promise<Record<string, ObjectInfoNode>>;
   /** 向真实事件总线发布该 prompt 的成功事件（驱动 tracker 定终态） */
   publishSuccess: (promptId: string) => void;
 }
@@ -35,6 +37,8 @@ export function makeFakeClient(): { client: ComfyClient; state: FakeHttpState; b
     deleteQueueCalls: [],
     downloads: new Map(),
     downloadCalls: 0,
+    objectInfoCalls: 0,
+    objectInfoImpl: async () => ({}),
     publishSuccess: (promptId: string) => {
       bus.publish({ type: "execution_success", data: { prompt_id: promptId } });
     }
@@ -68,6 +72,10 @@ export function makeFakeClient(): { client: ComfyClient; state: FakeHttpState; b
         for (const id of promptIds) {
           state.queuePromptIds.pending = state.queuePromptIds.pending.filter((p) => p !== id);
         }
+      },
+      async objectInfo() {
+        state.objectInfoCalls++;
+        return state.objectInfoImpl();
       },
       async downloadOutput(ref: { filename: string }) {
         state.downloadCalls++;

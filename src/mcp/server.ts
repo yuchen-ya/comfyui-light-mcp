@@ -43,11 +43,11 @@ export function createMcpServer(engine: Engine): McpServer {
   server.registerTool(
     "list_workflows",
     {
-      description: "列出已注册工作流（名称+描述+参数个数）。传 workflow 名则返回该工作流的完整参数说明（类型/必填/默认/枚举/范围）。",
+      description: "列出工作流（名称+描述+参数个数+ready/invalid/deleted 状态+指纹摘要+最后加载结果）。传 workflow 名则返回当前有效版本的完整参数说明；invalid 返回有界加载错误，不回退旧版本。",
       inputSchema: { workflow: z.string().optional().describe("可选：工作流名，返回参数详情") }
     },
     async ({ workflow }) => {
-      const result = engine.listWorkflows(workflow);
+      const result = await engine.listWorkflows(workflow);
       if ("error" in (result as Record<string, unknown>)) {
         const err = (result as { error: { message: string } }).error;
         return fail(err.message);
@@ -60,9 +60,10 @@ export function createMcpServer(engine: Engine): McpServer {
     "run_workflow",
     {
       description:
-        "提交运行工作流：单运行传 params（P2 兼容），批量传 runs 数组（每项 {label?, params}）。参数只接受 manifest 白名单；单 run 参数错误在批量下记为 invalid job 不影响其他 run，单运行简写则整体报错。可选 idempotency_key（同键重复调用不产生新 batch/新提交）、continue_on_error（默认 true：单任务失败不影响其余）、max_attempts（默认 1 不重试）。立即返回 batch_id，用 get_result（单运行）/ get_batch（批量）轮询。",
+        "提交运行工作流：单运行传 params（P2 兼容），批量传 runs 数组（每项 {label?, params}）。dry_run=true 时只做只读预检，绝不创建 Batch/Job/Attempt 或提交 Prompt，返回逐项统计与 passed/failed/unknown 检查。正式运行参数只接受 manifest 白名单；批量单 run 参数错误记为 invalid job，单运行简写整体报错。可选 idempotency_key、continue_on_error（默认 true）、max_attempts（默认 1）。正式提交立即返回 batch_id，用 get_result/get_batch 轮询。",
       inputSchema: {
         workflow: z.string().describe("list_workflows 中的名称"),
+        dry_run: z.boolean().default(false).describe("true：只预检并返回 not_submitted；不写 SQLite、不提交 Prompt、不触发调度或生成"),
         params: z.record(z.string(), z.unknown().default({})).optional().describe("单运行参数集（与 runs 二选一）"),
         runs: z
           .array(
@@ -82,11 +83,17 @@ export function createMcpServer(engine: Engine): McpServer {
       }
     },
     async (args) => {
-      const { workflow, params, runs, label, idempotency_key, continue_on_error, max_attempts } = args;
+      const { workflow, dry_run, params, runs, label, idempotency_key, continue_on_error, max_attempts } = args;
       if (params !== undefined && runs !== undefined) {
         return fail("params 与 runs 二选一：单运行用 params，批量用 runs 数组");
       }
       try {
+        if (dry_run) {
+          return ok(await engine.dryRun({
+            workflow,
+            runs: runs ?? [{ label, params: params ?? {} }]
+          }));
+        }
         if (runs !== undefined) {
           const handle = await engine.runBatch({
             workflow,

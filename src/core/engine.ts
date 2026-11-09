@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import type { AppConfig } from "../config.js";
 import type { ComfyClient } from "./client/index.js";
-import { WorkflowRegistry, type LoadReport } from "./workflow/registry.js";
+import { WorkflowRegistry, registeredWorkflowFingerprint, type LoadReport } from "./workflow/registry.js";
 import { BatchStore } from "./batch/store.js";
 import { ResultDelivery, type BatchResultIndex } from "./batch/result-delivery.js";
 import { JobRunner } from "./batch/runner.js";
@@ -13,6 +13,8 @@ import { AssetManager } from "./assets/asset-manager.js";
 import { validateParams } from "./workflow/mapper.js";
 import { ComfyLightError } from "../shared/errors.js";
 import { renderBounded } from "../shared/truncate.js";
+import { ObjectInfoCache } from "./workflow/object-info.js";
+import { calculateDryRun, invalidWorkflowDryRun, type DryRunView } from "./workflow/dry-run.js";
 
 /**
  * Core Engine facade（docs/002 §4.4）：MCP 层唯一入口，纯 TS 不依赖 MCP SDK。
@@ -53,7 +55,9 @@ export class Engine {
   readonly scheduler: Scheduler;
   private readonly assets: AssetManager;
   private readonly results: ResultDelivery;
+  private readonly objectInfo: ObjectInfoCache;
   private recovery: Promise<RecoveryReport> | null = null;
+  private workflowRefresh: Promise<void> | null = null;
   private lastReconciledAt = 0;
   private connectionEpoch = -1;
 
@@ -75,6 +79,10 @@ export class Engine {
     });
     this.runner = new JobRunner({ client, store: this.store, tracker: this.tracker });
     this.manager = new BatchManager(this.store);
+    this.objectInfo = new ObjectInfoCache({
+      fetcher: () => client.http.objectInfo(),
+      epoch: () => client.ws.getStats().reconnects ?? 0
+    });
     this.scheduler = new Scheduler({
       store: this.store,
       registry: this.registry,
@@ -98,27 +106,79 @@ export class Engine {
   start(): void {
     this.tracker.resume();
     this.scheduler.ensureStarted();
+    void this.refreshForExecution().catch(() => { /* 下一次调用/周期刷新会重试 */ });
   }
 
   /** 关停：停止提交，等待已开始的结果收集，再释放跟踪资源。关闭 DB 前须 await。 */
   async stop(): Promise<void> {
     await this.scheduler.stop();
+    await this.workflowRefresh;
     await this.tracker.stop();
     this.lastReconciledAt = 0;
   }
 
-  /** list_workflows：摘要 / 指定名详情 */
-  listWorkflows(name?: string): Record<string, unknown> {
+  /** list_workflows：摘要 / 指定名详情；调用前按文件指纹热加载。 */
+  async listWorkflows(name?: string): Promise<Record<string, unknown>> {
+    const report = await this.registry.refresh();
     if (name === undefined) {
-      const list = this.registry.list();
-      return { workflows: list, hint: "传 workflow=<name> 获取该工作流完整参数说明" };
+      return {
+        workflows: this.registry.list(),
+        load_errors: report.errors,
+        refresh: report.scanFailed ? "failed" : "ok",
+        hint: "传 workflow=<name> 获取该工作流完整参数说明"
+      };
+    }
+    if (report.scanFailed) {
+      throw new ComfyLightError("WORKFLOW_INVALID", "无法确认工作流文件的最新状态，请修复目录读取错误后重试");
+    }
+    const state = this.registry.statusOf(name);
+    if (state?.status === "invalid") {
+      const previous = this.registry.getLastValid(name);
+      return {
+        name,
+        status: "invalid",
+        workflow_error: state.error,
+        last_valid_version: previous?.manifest.version ?? null,
+        message: "当前文件无效；修复并成功热加载前不能执行，系统不会回退到旧版本"
+      };
     }
     const detail = this.registry.paramDetail(name);
     if (!detail) {
-      return { error: { code: "NOT_FOUND", message: `工作流 "${name}" 未注册。可用: ${this.registry.list().map((w) => w.name).join(", ") || "<无>"}` } };
+      const available = this.registry.list().filter((w) => w.status === "ready").map((w) => w.name).join(", ") || "<无>";
+      const reason = state?.status === "deleted" ? "已删除" : "未注册";
+      return { error: { code: "NOT_FOUND", message: `工作流 "${name}" ${reason}。可用: ${available}` } };
     }
     const w = this.registry.get(name)!;
-    return { name, description: w.manifest.description, version: w.manifest.version, params: detail };
+    return {
+      name,
+      status: "ready",
+      description: w.manifest.description,
+      version: w.manifest.version,
+      workflow_fingerprint: registeredWorkflowFingerprint(w),
+      last_loaded_at: state?.loadedAt ?? w.loadedAt ?? null,
+      params: detail
+    };
+  }
+
+  /** dry_run：仅热加载、GET object_info 与纯计算；不触碰 DB、调度器或提交端点。 */
+  async dryRun(req: { workflow: string; runs: RunSpec[] }): Promise<DryRunView> {
+    if (req.runs.length < 1 || req.runs.length > 200) {
+      throw new ComfyLightError("INVALID_RUNS", "dry-run runs 数量须为 1–200");
+    }
+    const report = await this.registry.refresh();
+    if (report.scanFailed) {
+      return invalidWorkflowDryRun(req.workflow, req.runs.length, {
+        code: "WORKFLOW_SCAN_FAILED",
+        message: "无法确认工作流文件最新状态；本次仅预检，未使用旧缓存版本"
+      });
+    }
+    const state = this.registry.statusOf(req.workflow);
+    if (state?.status === "invalid") {
+      return invalidWorkflowDryRun(req.workflow, req.runs.length, state.error ?? { message: "未知工作流加载错误" });
+    }
+    const wf = this.resolveWorkflow(req.workflow);
+    const objectInfo = await this.objectInfo.get();
+    return calculateDryRun(wf, req.runs, objectInfo);
   }
 
   /**
@@ -127,6 +187,7 @@ export class Engine {
    * 幂等命中先行（含请求指纹比对——同键不同内容 → IDEMPOTENCY_CONFLICT，离线可判）。
    */
   async runSingle(req: { workflow: string; params: Record<string, unknown>; label?: string; idempotencyKey?: string }): Promise<RunHandleView> {
+    await this.refreshForExecution();
     const wf = this.resolveWorkflow(req.workflow);
     // 参数校验先于连通性检查：参数错误与 ComfyUI 在线与否无关（错误自愈优先）
     validateParams(wf.manifest, req.params);
@@ -163,6 +224,7 @@ export class Engine {
     continueOnError?: boolean;
     maxAttempts?: number;
   }): Promise<BatchHandleView> {
+    await this.refreshForExecution();
     const wf = this.resolveWorkflow(req.workflow);
     if (req.idempotencyKey) {
       const existing = this.store.getBatchByIdempotencyKey(req.idempotencyKey);
@@ -264,6 +326,9 @@ export class Engine {
   }
 
   private async reconcileConnection(): Promise<void> {
+    // 周期刷新独立于 tick 的关键路径：不把真实 fs I/O 塞进 tick 的互斥窗口。
+    // 若刷新尚未完成，本拍保持原内存代际；run/list/dry-run 入口仍会 await 最新刷新。
+    void this.refreshForExecution().catch(() => { /* 下一周期重试 */ });
     const stats = this.client.ws.getStats();
     if (stats.state !== "open") {
       this.lastReconciledAt = 0;
@@ -278,12 +343,32 @@ export class Engine {
     this.lastReconciledAt = Date.now();
   }
 
+  private refreshForExecution(): Promise<void> {
+    this.workflowRefresh ??= this.registry.refresh().then((report) => {
+      if (report.scanFailed) {
+        throw new ComfyLightError("WORKFLOW_INVALID", "无法确认工作流文件的最新状态，本操作已停止；不会使用缓存旧版本");
+      }
+    }).finally(() => {
+      this.workflowRefresh = null;
+    });
+    return this.workflowRefresh;
+  }
+
   private resolveWorkflow(name: string) {
+    const state = this.registry.statusOf(name);
+    if (state?.status === "invalid") {
+      throw new ComfyLightError(
+        "WORKFLOW_INVALID",
+        `工作流 "${name}" 当前文件无效: ${state.error?.message ?? "未知加载错误"}。请修复文件；不会静默执行旧版本`
+      );
+    }
     const wf = this.registry.get(name);
     if (!wf) {
+      const available = this.registry.list().filter((w) => w.status === "ready").map((w) => w.name).join(", ") || "<无>";
+      const reason = state?.status === "deleted" ? "已删除" : "未注册";
       throw new ComfyLightError(
         "NOT_FOUND",
-        `工作流 "${name}" 未注册。可用: ${this.registry.list().map((w) => w.name).join(", ") || "<无>"}。先用 list_workflows 查看。`
+        `工作流 "${name}" ${reason}。可用: ${available}。先用 list_workflows 查看。`
       );
     }
     return wf;

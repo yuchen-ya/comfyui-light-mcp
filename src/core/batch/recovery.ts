@@ -76,6 +76,20 @@ export function pauseDriftedPendingBatches(deps: {
   for (const batchId of deps.store.batchesWithPendingJobs()) {
     const batch = deps.store.getBatch(batchId);
     if (!batch || batch.status !== "running") continue;
+    const state = deps.registry.statusOf?.(batch.workflow);
+    if (state?.status === "invalid") {
+      const n = deps.store.pauseBatchPendingJobs(
+        batchId,
+        `WORKFLOW_INVALID: 当前工作流文件无效（${state.error?.message ?? "未知加载错误"}）。剩余任务已暂停；修复并恢复原版本后自动继续，或另建新 batch。`,
+        "WORKFLOW_INVALID"
+      );
+      if (n > 0) {
+        const { status, finished } = deps.store.recomputeBatchStatus(batchId);
+        deps.store.updateBatchStatus(batchId, status, finished ? new Date().toISOString() : null);
+      }
+      paused += n;
+      continue;
+    }
     const wf = deps.registry.get(batch.workflow);
     if (!wf) continue; // 工作流不在注册表：留给提交路径落 WORKFLOW_GONE（不在此伪装版本漂移）
     const mismatch = fingerprintMismatch(

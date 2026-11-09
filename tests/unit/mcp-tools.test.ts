@@ -80,6 +80,44 @@ describe("MCP 工具（内存传输）", () => {
     });
   });
 
+  it("run_workflow dry_run：四工具不变，单/批量均 not_submitted 且零 SQLite/POST", async () => {
+    await withMcp(async ({ client, engine, fake }) => {
+      const tools = await client.listTools();
+      expect(tools.tools).toHaveLength(4);
+      const runTool = tools.tools.find((t) => t.name === "run_workflow")!;
+      expect(JSON.stringify(runTool.inputSchema)).toContain("dry_run");
+
+      const single = text((await client.callTool({
+        name: "run_workflow",
+        arguments: { workflow: "qwen-image-demo", dry_run: true, params: { prompt: "a cube", seed: 7, steps: 4 } }
+      })) as never) as { valid: boolean; submission: string; checks: Record<string, string> };
+      expect(single.valid).toBe(true);
+      expect(single.submission).toBe("not_submitted");
+      expect(single.checks["node_types"]).toBe("unknown");
+
+      const batch = text((await client.callTool({
+        name: "run_workflow",
+        arguments: {
+          workflow: "qwen-image-demo",
+          dry_run: true,
+          runs: [
+            { label: "valid", params: { prompt: "a red sphere", seed: 100, steps: 4 } },
+            { label: "invalid", params: { prompt: "a blue sphere", seed: 200, steps: 999 } }
+          ]
+        }
+      })) as never) as { runs: { total: number; valid: number; invalid: number }; submission: string };
+      expect(batch.runs).toMatchObject({ total: 2, valid: 1, invalid: 1 });
+      expect(batch.submission).toBe("not_submitted");
+      expect(fake.submitCalls).toBe(0);
+      expect(fake.interruptCalls).toEqual([]);
+      expect(engine.scheduler.isRunning()).toBe(false);
+      for (const table of ["batches", "jobs", "job_attempts"]) {
+        const db = (engine.store as unknown as { db: { prepare: (sql: string) => { get: () => { n: number } } } }).db;
+        expect(db.prepare(`SELECT count(*) AS n FROM ${table}`).get().n).toBe(0);
+      }
+    });
+  });
+
   it("run_workflow 参数非法 → isError 且错误可自愈（含未知键与越界值）", async () => {
     await withMcp(async ({ client, fake }) => {
       const res = (await client.callTool({

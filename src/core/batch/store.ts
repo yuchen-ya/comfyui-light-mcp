@@ -432,8 +432,12 @@ export class BatchStore {
       ).changes;
   }
 
-  /** 工作流版本漂移：暂停 batch 内全部 pending job（error_json 记 WORKFLOW_VERSION_MISMATCH 明细） */
-  pauseBatchPendingJobs(batchId: string, mismatchDetail: string): number {
+  /** 工作流版本漂移/文件无效：暂停 batch 内全部 pending job，并保留明确的稳定错误码。 */
+  pauseBatchPendingJobs(
+    batchId: string,
+    mismatchDetail: string,
+    code?: "WORKFLOW_VERSION_MISMATCH" | "LEGACY_SNAPSHOT_MISSING" | "WORKFLOW_INVALID"
+  ): number {
     return this.db
       .prepare(
         `UPDATE jobs SET status = 'paused', error_json = ?, finished_at = NULL
@@ -441,7 +445,7 @@ export class BatchStore {
       )
       .run(
         JSON.stringify({
-          code: mismatchDetail.includes("LEGACY_SNAPSHOT_MISSING") ? "LEGACY_SNAPSHOT_MISSING" : "WORKFLOW_VERSION_MISMATCH",
+          code: code ?? (mismatchDetail.includes("LEGACY_SNAPSHOT_MISSING") ? "LEGACY_SNAPSHOT_MISSING" : "WORKFLOW_VERSION_MISMATCH"),
           message: mismatchDetail
         }),
         batchId

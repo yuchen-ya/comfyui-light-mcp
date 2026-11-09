@@ -13,6 +13,7 @@ export type ErrorCode =
   | "TIMEOUT"
   | "NOT_FOUND"
   | "INVALID_RUNS"
+  | "WORKFLOW_INVALID"
   | "IDEMPOTENCY_CONFLICT"
   | "INTERNAL";
 

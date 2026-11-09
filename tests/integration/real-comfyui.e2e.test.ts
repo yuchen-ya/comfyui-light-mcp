@@ -65,7 +65,7 @@ describe.skipIf(!reachable)("真实 ComfyUI 文生图端到端", () => {
       await client.start();
       try {
         // list
-        const detail = engine.listWorkflows("qwen-image-demo") as { params: Array<{ name: string }> };
+        const detail = await engine.listWorkflows("qwen-image-demo") as { params: Array<{ name: string }> };
         expect(detail.params?.length).toBe(8); // Task 004 增 sampler（combo 由 ComfyUI 校验）
 
         // run（固定 seed 保证可断言）
