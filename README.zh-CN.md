@@ -173,10 +173,18 @@ tarball 安装时将 args 指向 `node_modules/comfyui-light-mcp/dist/index.js`�
 升级前停止 MCP 客户端进程并等待退出，无写入期间复制整个 DATA_DIR，包括仍存在的 `-wal/-shm`。活跃数据库请使用 SQLite 在线备份 API，不能只复制 `.db`。OUTPUT_DIR、工作流/manifest 和 ComfyUI 输入素材另外备份。在线一致性备份示例，在已安装包目录执行：
 
 ```powershell
-node --input-type=module -e 'import Database from "better-sqlite3"; const db = new Database(process.argv[1], {readonly:true}); try { await db.backup(process.argv[2]); } finally { db.close(); }' C:/mcp/data/comfyui-light.db C:/mcp/backups/before-upgrade.db
+@'
+import Database from "better-sqlite3";
+const db = new Database(process.argv[2], { readonly: true });
+try {
+  await db.backup(process.argv[3]);
+} finally {
+  db.close();
+}
+'@ | node --input-type=module - 'C:/mcp/data/comfyui-light.db' 'C:/mcp/backups/before-upgrade.db'
 ```
 
-先创建备份目录并使用新的备份文件名；该操作生成独立备份，不迁移原库。回退需使用相应升级前备份和独立 DATA_DIR，不能让旧程序写升级后的库。恢复备份后，未知远端任务仍需对账，不能直接重新提交。
+该单引号 here-string 兼容 Windows PowerShell 5.1 和 PowerShell 7；路径含空格时需保留引号。先创建备份目录并使用新的备份文件名；该操作生成独立备份，不迁移原库。回退需使用相应升级前备份和独立 DATA_DIR，不能让旧程序写升级后的库。恢复备份后，未知远端任务仍需对账，不能直接重新提交。
 
 ## 常见错误
 

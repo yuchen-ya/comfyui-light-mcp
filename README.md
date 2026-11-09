@@ -167,10 +167,18 @@ State lives at `DATA_DIR/comfyui-light.db` using WAL. Keep the whole DATA_DIR on
 Before upgrading, stop the MCP client process and wait for its exit. Then copy the entire DATA_DIR, including any `-wal` and `-shm` files, while no process writes it. For a live database use SQLite's online backup API instead of copying only the `.db` file. Retain OUTPUT_DIR, workflow/manifest pairs and ComfyUI inputs separately. Example consistent online backup, run in the installed package directory:
 
 ```powershell
-node --input-type=module -e 'import Database from "better-sqlite3"; const db = new Database(process.argv[1], {readonly:true}); try { await db.backup(process.argv[2]); } finally { db.close(); }' C:/mcp/data/comfyui-light.db C:/mcp/backups/before-upgrade.db
+@'
+import Database from "better-sqlite3";
+const db = new Database(process.argv[2], { readonly: true });
+try {
+  await db.backup(process.argv[3]);
+} finally {
+  db.close();
+}
+'@ | node --input-type=module - 'C:/mcp/data/comfyui-light.db' 'C:/mcp/backups/before-upgrade.db'
 ```
 
-Create the backup directory first and choose a new filename. This makes a separate backup, never changes the schema. Restore or roll back using the appropriate backup in an independent DATA_DIR; an older binary must not write the upgraded database. Unknown remote jobs need reconciliation before new submissions, including after restoring a backup.
+This literal here-string works in Windows PowerShell 5.1 and PowerShell 7; keep paths quoted if they contain spaces. Create the backup directory first and choose a new filename. This makes a separate backup, never changes the schema. Restore or roll back using the appropriate backup in an independent DATA_DIR; an older binary must not write the upgraded database. Unknown remote jobs need reconciliation before new submissions, including after restoring a backup.
 
 ## Troubleshooting and current limits
 

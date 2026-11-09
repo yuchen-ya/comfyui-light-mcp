@@ -126,6 +126,40 @@ describe("batch result delivery (no generation)", () => {
     expect((await records(downloaded.index_path))[0].outputs.every((output: { availability: string }) => output.availability === "available")).toBe(true);
   });
 
+  it("single queries restore deleted files once without downloading retained files", async () => {
+    batch(["succeeded"]);
+    const initial = await engine.getResult("batch", 0);
+    expect(fake.state.downloadCalls).toBe(2);
+    const deletedPath = initial.outputs[0]!["local_path"] as string;
+    const retainedPath = initial.outputs[1]!["local_path"] as string;
+    await rm(deletedPath);
+
+    expect(await engine.getResult("batch", 0, { download: false })).toEqual(initial);
+    expect(fake.state.downloadCalls).toBe(2);
+    await expect(stat(deletedPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const restored = await Promise.all(Array.from({ length: 10 }, () => engine.getResult("batch", 0)));
+    for (const result of restored) expect(result).toEqual(initial);
+    expect(await readFile(deletedPath, "utf8")).toBe("fake-image-bytes");
+    expect(await readFile(retainedPath, "utf8")).toBe("fake-image-bytes");
+    expect(fake.state.downloadCalls).toBe(3);
+  });
+
+  it("single queries propagate a deleted output's download failure and can retry it", async () => {
+    batch(["succeeded"]);
+    const initial = await engine.getResult("batch", 0);
+    const deletedPath = initial.outputs[0]!["local_path"] as string;
+    await rm(deletedPath);
+    const failure = new Error("network");
+    vi.spyOn(fake.client.http, "downloadOutput").mockRejectedValueOnce(failure);
+
+    await expect(engine.getResult("batch", 0)).rejects.toBe(failure);
+    expect(fake.state.downloadCalls).toBe(2);
+    expect(await engine.getResult("batch", 0)).toEqual(initial);
+    expect(fake.state.downloadCalls).toBe(3);
+    expect(await readFile(deletedPath, "utf8")).toBe("fake-image-bytes");
+  });
+
   it("uses manifest seed parameter names without exposing other resolved parameters", async () => {
     batch(["succeeded"]);
     const workflows = path.join(directory, "workflows");

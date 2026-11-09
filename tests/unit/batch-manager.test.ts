@@ -87,6 +87,7 @@ describe("批量创建", () => {
     const bad4 = store.getJob(res.batchId, 4)!;
     expect((JSON.parse(bad4.error_json!) as { issues: Array<{ param: string }> }).issues[0]!.param).toBe("prompt");
     for (const i of [0, 2]) expect(store.getJob(res.batchId, i)!.status).toBe("pending");
+    expect(store.getBatch(res.batchId)).toMatchObject({ status: "running", finished_at: null });
   });
 
   it("runs 结构错误 → INVALID_RUNS（空数组 / 超上限）", () => {

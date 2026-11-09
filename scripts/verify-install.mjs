@@ -2,7 +2,7 @@
 /* global fetch, AbortSignal */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
@@ -111,6 +111,7 @@ const session = launch();
 let single;
 let batch;
 let index;
+let invalidBatch;
 try {
   await session.initialize();
   const { tools } = await session.rpc("tools/list", {});
@@ -132,6 +133,13 @@ try {
   assert.equal(result.status, "succeeded");
   assert.equal(result.params_resolved.color, 255);
   assert((await stat(result.outputs[0].local_path)).size > 0);
+  const singlePath = result.outputs[0].local_path;
+  assert.equal(path.dirname(singlePath), path.join(runDir, "output", single.batch_id, "0"));
+  await rm(singlePath);
+  await session.call("get_result", { batch_id: single.batch_id, download: false });
+  await assert.rejects(stat(singlePath), { code: "ENOENT" });
+  const restored = await session.call("get_result", { batch_id: single.batch_id, download: true });
+  assert.equal((await stat(singlePath)).size, restored.outputs[0].bytes);
   batch = await session.call("run_workflow", {
     workflow: "solid-color", idempotency_key: "install-batch", runs: [
       { label: "green", params: { color: 65280 } },
@@ -153,6 +161,25 @@ try {
     assert.equal(row.outputs[0].availability, "available");
     assert.equal((await stat(row.outputs[0].local_path)).size, row.outputs[0].bytes);
   }
+  const invalidRequest = {
+    workflow: "solid-color", idempotency_key: "install-all-invalid", runs: [
+      { params: { color: -1 } }, { params: { color: -2 } }
+    ]
+  };
+  invalidBatch = await session.call("run_workflow", invalidRequest);
+  assert.equal(invalidBatch.status, "failed");
+  const invalidView = await session.call("get_batch", { batch_id: invalidBatch.batch_id });
+  assert.equal(invalidView.status, "failed");
+  assert.equal(invalidView.stats.invalid, 2);
+  assert(invalidView.jobs.every(job => job.attempt_no === 0));
+  const invalidIndex = await session.call("get_result", { batch_id: invalidBatch.batch_id, mode: "index" });
+  assert.equal(invalidIndex.complete, true);
+  assert.equal(invalidIndex.status, "failed");
+  assert.equal(invalidIndex.invalid, 2);
+  const reused = await session.call("run_workflow", invalidRequest);
+  assert.equal(reused.batch_id, invalidBatch.batch_id);
+  assert.equal(reused.reused, true);
+  assert.equal(reused.status, "failed");
 } finally {
   await session.close();
 }
@@ -162,6 +189,7 @@ try {
   await reopened.initialize();
   assert.equal((await reopened.call("get_result", { batch_id: single.batch_id })).status, "succeeded");
   assert.equal((await reopened.call("get_batch", { batch_id: batch.batch_id })).stats.succeeded, 2);
+  assert.equal((await reopened.call("get_batch", { batch_id: invalidBatch.batch_id })).status, "failed");
   const again = await reopened.call("get_result", { batch_id: batch.batch_id, mode: "index" });
   assert.equal(again.updated_at, index.updated_at);
   assert.equal(again.index_path, index.index_path);
@@ -173,8 +201,8 @@ try {
   assert.equal(db.pragma("user_version", { simple: true }), 5);
   assert.deepEqual(db.pragma("integrity_check"), [{ integrity_check: "ok" }]);
   assert.deepEqual(db.pragma("foreign_key_check"), []);
-  assert.equal(db.prepare("SELECT count(*) AS n FROM batches").get().n, 2);
-  assert.equal(db.prepare("SELECT count(*) AS n FROM jobs").get().n, 4);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM batches").get().n, 3);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM jobs").get().n, 6);
   assert.equal(db.prepare("SELECT count(*) AS n FROM job_attempts").get().n, 3);
   await db.backup(path.join(runDir, "backup.db"));
 } finally {
@@ -190,7 +218,9 @@ const report = {
   package_version: metadata.version, node: process.version, platform: process.platform, arch: process.arch,
   comfyui_version: backend.system.comfyui_version, native_sqlite: "passed", stdio_tools: 4,
   single_succeeded: 1, batch_succeeded: 2, batch_invalid: 1, jsonl_rows: 3,
-  persisted_batches: 2, persisted_jobs: 4, attempts_before_and_after_restart: 3,
+  single_missing_file_recovered: true, download_false_preserves_missing_file: true,
+  all_invalid_batch: { status: "failed", invalid: 2, complete: true, reused: true },
+  persisted_batches: 3, persisted_jobs: 6, attempts_before_and_after_restart: 3,
   integrity_check: "ok", foreign_key_check: "ok", online_backup: "passed", eof_exit: "0 on both starts"
 };
 await writeFile(path.join(runDir, "report.json"), `${JSON.stringify(report, null, 2)}\n`);

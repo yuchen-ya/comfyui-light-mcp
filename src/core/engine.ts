@@ -212,16 +212,11 @@ export class Engine {
         outputs = [];
       }
     }
-    // 按需下载（AUTO_SAVE_OUTPUTS=false 或恢复时未落盘）：仅 succeeded 且存在未下载引用
+    // 收集器检查真实文件，补下载尚未落盘或已被删除的输出。
     if (opts.download !== false && job.status === "succeeded") {
-      const missing = outputs.filter(
-        (o) => typeof o["local_path"] === "string" && (o["local_path"] as string) === ""
-      );
-      if (missing.length > 0) {
-        const collected = await this.results.collect(job, true);
-        if (collected.failure) throw collected.failure;
-        outputs = collected.assets as unknown as Array<Record<string, unknown>>;
-      }
+      const collected = await this.results.collect(job, true);
+      if (collected.failure) throw collected.failure;
+      outputs = collected.assets as unknown as Array<Record<string, unknown>>;
     }
     let error = null;
     if (job.error_json) {

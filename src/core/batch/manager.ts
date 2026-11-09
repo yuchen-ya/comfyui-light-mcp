@@ -192,6 +192,11 @@ export class BatchManager {
       };
     });
 
+    if (invalid === jobs.length) {
+      batch.status = "failed";
+      batch.finished_at = now;
+    }
+
     try {
       this.store.createBatchWithJobs(batch, jobs);
     } catch (e) {

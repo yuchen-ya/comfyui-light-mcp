@@ -120,6 +120,46 @@ function rejectTexts(fake: FakeHttpState, texts: string[]): void {
   };
 }
 
+describe("创建即全部 invalid", () => {
+  it.each([undefined, true, false])("continue_on_error=%s：立即 failed，幂等重取和调度均不创建 Attempt 或提交", async (continueOnError) => {
+    const ctx = makeCtx();
+    try {
+      const req = {
+        runs: [
+          { params: { prompt: "a", no_such_param: 1 } },
+          { params: { prompt: "b", no_such_param: 2 } }
+        ],
+        idempotencyKey: "all-invalid",
+        continueOnError
+      };
+      const res = ctx.manager.createBatch(wf, req);
+      const batch = ctx.store.getBatch(res.batchId)!;
+      expect(res).toMatchObject({ total: 2, invalid: 2, reused: false });
+      expect(batch.status).toBe("failed");
+      expect(batch.finished_at).toBe(batch.created_at);
+      expect(batch.finished_at).not.toBeNull();
+      expect(ctx.manager.getBatchView(res.batchId)).toMatchObject({
+        status: "failed",
+        stats: { total: 2, invalid: 2, pending: 0, running: 0, queued: 0 }
+      });
+
+      expect(ctx.manager.createBatch(wf, req)).toEqual({ ...res, reused: true });
+      await ctx.scheduler.tick();
+      await ctx.scheduler.tick();
+      expect(ctx.store.getBatch(res.batchId)).toEqual(batch);
+      expect(ctx.store.countJobs(res.batchId)).toBe(2);
+      for (const job of ctx.store.listJobs(res.batchId, { limit: 2, offset: 0 })) {
+        expect(job).toMatchObject({ status: "invalid", attempt_no: 0, prompt_id: null, finished_at: batch.finished_at });
+        expect(ctx.store.getAttempts(job.id)).toHaveLength(0);
+      }
+      expect(ctx.fake.submitCalls).toBe(0);
+    } finally {
+      ctx.tracker.disposeAll();
+      ctx.db.close();
+    }
+  });
+});
+
 describe("continue_on_error=false × max_attempts>1", () => {
   it("失败先重试：重试未用尽不触发级联（b/c 保持 pending，batch 不收敛）", async () => {
     const ctx = makeCtx();
