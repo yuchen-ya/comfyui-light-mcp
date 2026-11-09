@@ -1,0 +1,63 @@
+{
+  "status": "failed_missing_execution_events",
+  "base_sha": "5cc4b870094c89090db54bd8d12649dcaf89f2ba",
+  "module_sha256": "02d394e1c2be3d4e3da2b9a6570d282fb4e7a75d1fa69c4c8bc7767e69f1e8c9",
+  "patch_sha256": "b0bc121ab8ca1e3d7810af65c7be4ee593a2f8f608c90274cc490b48f4f0018b",
+  "checkout_note": "Windows checkout CRLF verified equivalent then restored exact LF git blob before patch",
+  "startup": {
+    "host": "loopback",
+    "port": 8194,
+    "python": "COMFYUI_STABLE_PYTHON",
+    "custom_nodes_disabled": true,
+    "partner_nodes_disabled": true,
+    "offline_flag": true,
+    "manager_enabled": false,
+    "state_and_caches": "isolated benchmark directory",
+    "model_directory": "empty isolated directory",
+    "listener_owned_by_started_process": true
+  },
+  "valid_post_attempts": 1,
+  "proxy_used": false,
+  "error": "Expected execution_start and execution_success audit events were not emitted",
+  "audit_events": {
+    "post_requests": 1,
+    "post_responses": 1,
+    "request_id_matches": true,
+    "response_status": 200,
+    "response_prompt_id_matches_request": true,
+    "request_graph_matches_history": true,
+    "execution_start": 0,
+    "execution_success": 0,
+    "failure_marker": false,
+    "request_body_matches_sent_bytes": true,
+    "response_body_matches_received_bytes": true
+  },
+  "image": {
+    "count": 1,
+    "format": "PNG",
+    "decoded": true,
+    "size": [
+      64,
+      64
+    ],
+    "mode": "RGB",
+    "pixel_rgb": [
+      36,
+      104,
+      172
+    ],
+    "matches_requested_color": true
+  },
+  "diagnosis": "Submitted request lacked client_id. Execution code records lifecycle events in history but calls send_sync only if client_id is present or broadcast is true; start/success use broadcast false. A send_sync-only audit therefore misses lifecycle events in this real path.",
+  "history": {
+    "execution_start": 1,
+    "execution_success": 1,
+    "completed_success": true
+  },
+  "missing": {
+    "send_sync_execution_start": true,
+    "send_sync_execution_success": true,
+    "formal_benchmark_result": null
+  },
+  "own_8194_process_stopped": true
+}

@@ -1,0 +1,52 @@
+{
+  "run_id": "a2-b-r1",
+  "case": "A2",
+  "status": "machine_checks_passed",
+  "checks": {
+    "template_snapshot_matches_frozen": true,
+    "template_after_bytes_unchanged": true,
+    "organizer_pre_task_hashes_match": true,
+    "expected_index_count": true,
+    "index_status_consistent_with_success": true,
+    "unique_item_ids": true,
+    "unique_prompt_ids": true,
+    "organizer_observer_complete": true,
+    "window_post_count": true,
+    "all_post_responses_unique_and_indexed": true,
+    "one_start_and_success_per_item": true,
+    "no_unmatched_execution_starts": true,
+    "execution_order_matches_submission": true,
+    "frozen_experiment_shape": true,
+    "frozen_12_plus_4_matrix": true,
+    "only_allowed_graph_fields_changed": true,
+    "index_seed_prompt_parameters_match_actual_post": true,
+    "output_files_and_declared_sizes": true,
+    "output_png_metadata_matches_actual_post": true,
+    "all_png_decoded": true,
+    "duplicate_executions": 0,
+    "candidate_copy_matches_selection": true,
+    "training_completed_before_validation_submission": true,
+    "selection_evidence_and_contact_sheets_present": true
+  },
+  "errors": [],
+  "unavailable": [],
+  "counts": {
+    "index_items": 16,
+    "window_posts": 16,
+    "unique_response_handles": 16,
+    "png_decoded": 16,
+    "jobs_with_cache": 15
+  },
+  "source_sha256": {
+    "index": "4b7f04c7b0023528f248eb115e1688b49662ac7902e269d0fb55dae30c5cfcf9",
+    "metrics": "8b703252c32357fede8807b6247052dfabca1cc2f4d6508229d6b1c05b1c2570",
+    "before": "7def64228a4a403f12b650718b5334b769497b15ce57b53b3180f7f9df115927",
+    "after": "7def64228a4a403f12b650718b5334b769497b15ce57b53b3180f7f9df115927"
+  },
+  "normalization": "Index seed may be taken from params when top-level seed is absent; no source files modified.",
+  "quality": "pending_human_review",
+  "limits": [
+    "Observer completeness depends on the independently recorded organizer window and backend audit health.",
+    "Model quality and selection rationale require independent review."
+  ]
+}

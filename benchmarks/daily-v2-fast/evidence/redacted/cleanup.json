@@ -1,0 +1,8 @@
+{
+  "production_instance_stopped": false,
+  "managed_comfy_instances_stopped": 6,
+  "checked_at_utc": "2026-11-09T09:19:15.5854202Z",
+  "raw_evidence_retained": true,
+  "managed_mcp_bridge_trees_stopped": 6,
+  "task_listener_ports_clear": true
+}

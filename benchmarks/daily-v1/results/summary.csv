@@ -1,0 +1,7 @@
+run_id,case_id,arm,stage,status,verified_output_files,input_tokens,cached_input_tokens,output_tokens,peak_request_input_tokens,model_requests,mcp_tool_calls,mcp_requests,exact_duplicate_executions,quality
+"pilot-a1-a","A1","A","pilot","completed_with_evidence_limits","20","435900","408704","4007","36627","14","32","35",,"task-specific machine verification; no blinded quality-equivalence claim"
+"pilot-a1-b","A1","B","pilot","completed_with_evidence_limits","20","570122","546432","5282","46668","15","63","71",,"task-specific machine verification; no blinded quality-equivalence claim"
+"pilot-a2-a","A2","A","pilot","completed_with_evidence_limits","16","785918","748544","7897","44977","23","25","35",,"automated_proxy_pending_human_confirmation"
+"pilot-a2-b","A2","B","pilot","completed_with_evidence_limits","16","1342996","1297408","9871","59156","29","52","58",,"automated_proxy_pending_human_confirmation"
+"pilot-a4-a","A4","A","pilot","completed_with_evidence_limits","3","808396","743040","11615","50463","21","23","30",,"task-specific machine verification; no blinded quality-equivalence claim"
+"pilot-a4-b","A4","B","pilot","completed_with_evidence_limits","3","1227384","1157760","12019","58861","26","30","38",,"task-specific machine verification; no blinded quality-equivalence claim"

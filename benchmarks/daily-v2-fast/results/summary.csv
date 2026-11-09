@@ -1,0 +1,7 @@
+run_id,case_id,arm,repeat,verified_outputs,duplicate_executions,input_tokens,cached_input_tokens,output_tokens,peak_request_input_tokens,model_requests,mcp_tool_calls,mcp_requests,selected_config_id,sampler_cached_jobs
+a2-b-r1,A2,B,1,16,0,1133484,1093760,7243,55449,26,52,54,cfg-3,0
+a2-a-r1,A2,A,1,16,0,654298,610176,5975,40056,21,25,27,cfg-3,0
+a1-a-r1,A1,A,1,20,0,447803,418560,3313,35050,15,25,27,,0
+a1-b-r1,A1,B,1,20,0,865617,841344,5670,46120,22,62,64,,0
+a2-a-r2,A2,A,2,16,0,824124,793856,6304,44262,25,32,34,cfg-3,0
+a2-b-r2,A2,B,2,16,0,942058,917504,5925,46793,25,49,51,cfg-5,0

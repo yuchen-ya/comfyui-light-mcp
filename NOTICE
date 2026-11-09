@@ -15,8 +15,13 @@ Third-party code adapted into this repository:
    - Original license text:
      https://github.com/MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript/blob/main/LICENSE
 
-2. Comfy-Org/comfy-mcp (AGPL-3.0 OR commercial) was used as a DESIGN REFERENCE ONLY.
-   No code from that project is included here.
+2. Comfy-Org/comfy-mcp was used as a design reference and as a separately run
+   benchmark opponent. No implementation code from that project is included.
+   Benchmark protocol captures contain upstream instructions and interface
+   descriptions, with publication redactions. Their source attribution and
+   upstream license/notice are retained in benchmarks/THIRD_PARTY.md and
+   benchmarks/third-party/comfy-mcp/; these captures are not presented as
+   original MIT-licensed implementation code.
 
 Runtime dependencies (each governed by its own license, not merged into this
 source tree): better-sqlite3 (MIT), ws (MIT), zod (MIT).

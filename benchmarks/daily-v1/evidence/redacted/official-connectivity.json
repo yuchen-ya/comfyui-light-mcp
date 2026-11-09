@@ -1,0 +1,79 @@
+{
+  "case": "006A_official_single_image_connectivity",
+  "classification": "preparation_not_formal_score",
+  "status": "succeeded",
+  "collected_at": "2026-11-09T07:13:25.174284+00:00",
+  "server": {
+    "name": "comfy-mcp",
+    "version": "0.10.0",
+    "comfy_cli_version": "1.14.0",
+    "target": "isolated_loopback_test_instance",
+    "reported_running": true
+  },
+  "workflow": {
+    "source": "public_example_qwen_api",
+    "prompt": "A red ceramic cup on a white table, soft daylight",
+    "seed": 9000602,
+    "steps": 4,
+    "width": 512,
+    "height": 512,
+    "changed_fields": [
+      "prompt",
+      "seed",
+      "steps"
+    ],
+    "note": "Width and height were already 512 in the source."
+  },
+  "timeline_utc": {
+    "first_server_info_recorded": "2026-11-09T07:11:21.100470+00:00",
+    "submission_started": "2026-11-09T07:11:56.187Z",
+    "submission_result_recorded": "2026-11-09T07:11:56.937298+00:00",
+    "job_result_recorded": "2026-11-09T07:12:18.060501+00:00",
+    "fetch_result_recorded": "2026-11-09T07:12:40.343499+00:00"
+  },
+  "mcp_requests": {
+    "initialize": 4,
+    "tools_list": 0,
+    "tool_calls": {
+      "server_info": 4,
+      "run_workflow": 1,
+      "job_wait": 1,
+      "fetch_outputs": 1
+    }
+  },
+  "submission": {
+    "response": "queued",
+    "job": "completed",
+    "requested": 1,
+    "observed_result_files": 1,
+    "duplicate_executions": null,
+    "duplicate_evidence": "unavailable"
+  },
+  "output": {
+    "path_alias": "official_connectivity_output_1",
+    "file_type": "png",
+    "size_bytes": 167921,
+    "width": 512,
+    "height": 512,
+    "decode": "valid",
+    "decoder": "Windows GDI+ image drawn to bitmap"
+  },
+  "usage": {
+    "source": "unavailable",
+    "input_tokens": null,
+    "output_tokens": null
+  },
+  "environment": {
+    "profile": "isolated_official_profile",
+    "comfy_bin": "isolated_official_cli",
+    "workspace": "isolated_comfy_base",
+    "global_consent_set": false,
+    "dependencies_installed": false,
+    "comfy_restarted": false
+  },
+  "deviations": [
+    "A read-only comfy --help was invoked once before the isolated profile environment was applied; subsequent CLI and MCP child processes used the isolated environment. No generation was submitted by that help command."
+  ],
+  "error_summary": null,
+  "raw_evidence": "locally retained outside public report"
+}

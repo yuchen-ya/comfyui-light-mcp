@@ -1,0 +1,49 @@
+{
+  "run_id": "a1-a-r1",
+  "case": "A1",
+  "status": "machine_checks_passed",
+  "checks": {
+    "template_snapshot_matches_frozen": true,
+    "template_after_bytes_unchanged": true,
+    "organizer_pre_task_hashes_match": true,
+    "expected_index_count": true,
+    "index_status_consistent_with_success": true,
+    "unique_item_ids": true,
+    "unique_prompt_ids": true,
+    "organizer_observer_complete": true,
+    "window_post_count": true,
+    "all_post_responses_unique_and_indexed": true,
+    "one_start_and_success_per_item": true,
+    "no_unmatched_execution_starts": true,
+    "execution_order_matches_submission": true,
+    "frozen_item_and_seed_coverage": true,
+    "only_allowed_graph_fields_changed": true,
+    "index_seed_prompt_parameters_match_actual_post": true,
+    "output_files_and_declared_sizes": true,
+    "output_png_metadata_matches_actual_post": true,
+    "all_png_decoded": true,
+    "duplicate_executions": 0,
+    "followup_posts": 0
+  },
+  "errors": [],
+  "unavailable": [],
+  "counts": {
+    "index_items": 20,
+    "window_posts": 20,
+    "unique_response_handles": 20,
+    "png_decoded": 20,
+    "jobs_with_cache": 20
+  },
+  "source_sha256": {
+    "index": "180372d0921b771d94cdabe95d43023e41efeaac4bd86fe59066a317f8cbaf07",
+    "metrics": "062d6279341941bc7617b83508ee6d6aa4cc3982d2a8e25ef3697367271e5b21",
+    "before": "7def64228a4a403f12b650718b5334b769497b15ce57b53b3180f7f9df115927",
+    "after": "7def64228a4a403f12b650718b5334b769497b15ce57b53b3180f7f9df115927"
+  },
+  "normalization": "Index seed may be taken from params when top-level seed is absent; no source files modified.",
+  "quality": "not_applicable",
+  "limits": [
+    "Observer completeness depends on the independently recorded organizer window and backend audit health.",
+    "Model quality and selection rationale require independent review."
+  ]
+}

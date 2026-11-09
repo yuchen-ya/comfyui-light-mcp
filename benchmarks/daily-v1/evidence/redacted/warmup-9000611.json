@@ -1,0 +1,12 @@
+{
+  "stage": "preparation",
+  "source": "organizer_direct_api_bypass",
+  "seed": 9000611,
+  "prompt_id": "9b02350c-5b89-4c53-abfb-e574b9ad8e70",
+  "started_at": "2026-11-09T07:20:28.416Z",
+  "finished_at": "2026-11-09T07:20:32.447Z",
+  "status": "success",
+  "submitted_generations": 1,
+  "purpose": "Symmetric execution-cache reset, model unload, and 4-step warmup before one pilot task",
+  "formal_score": false
+}

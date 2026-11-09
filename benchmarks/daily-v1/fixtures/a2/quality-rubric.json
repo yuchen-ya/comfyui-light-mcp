@@ -1,0 +1,10 @@
+{
+  "scale": "Score each criterion 0–2: 0 unacceptable, 1 flawed, 2 acceptable.",
+  "criteria": {
+    "content_match": "0 wrong subject; 1 partly matches; 2 clearly matches prompt",
+    "artifacts": "0 severe artifacts; 1 visible but tolerable flaws; 2 no obvious distracting artifacts",
+    "detail_usability": "0 unusable detail; 1 usable with substantial limitations; 2 sufficiently clear and coherent"
+  },
+  "threshold": "Each criterion >= 1 and total >= 5 for each image; assess baseline and candidate on validation seeds blind to arm. Record individual scores and reviewer identity as an anonymized logical alias.",
+  "review": "Independent blinded human review; absent human review label automated proxy / pending human confirmation, never claim equivalent quality."
+}

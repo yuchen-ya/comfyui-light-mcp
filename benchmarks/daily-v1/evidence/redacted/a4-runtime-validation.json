@@ -1,0 +1,136 @@
+{
+  "source": "organizer_direct_api_bypass",
+  "status": "passed",
+  "max_posts": 6,
+  "posts_attempted": 6,
+  "cases": [
+    {
+      "case": "01-text-image",
+      "status": "passed",
+      "prompt_id": "ba24f63d-ef9d-4207-8851-62eb0b7851c3",
+      "output": {
+        "sha256": "7c291917b7115a27a00e746a4230c97e819ceec1e6b0668398b8b6290fba1530",
+        "bytes": 289632,
+        "pixel_check": null,
+        "width": 512,
+        "decoded": true,
+        "height": 512
+      }
+    },
+    {
+      "case": "02-image-edit",
+      "status": "passed",
+      "prompt_id": "941f0b86-2620-4a00-b57f-efc544d67e3c",
+      "output": {
+        "sha256": "9225fb1166b448b3e1a2979f8ccb6f8eaca8b990c8cee258d892f01b9bdfe201",
+        "bytes": 210425,
+        "pixel_check": null,
+        "width": 528,
+        "decoded": true,
+        "height": 528
+      }
+    },
+    {
+      "case": "03-upscale",
+      "status": "passed",
+      "prompt_id": "34ee0ee5-5057-452f-9d3f-c7ae72067cf4",
+      "output": {
+        "sha256": "a0a3dcfe7cbfa6abc1989725a6f05ac40311491185180651418e81c321be07a2",
+        "bytes": 791,
+        "pixel_check": true,
+        "width": 128,
+        "decoded": true,
+        "height": 128
+      }
+    },
+    {
+      "case": "04-flip",
+      "status": "passed",
+      "prompt_id": "33138ca6-9c1b-4463-a0bd-f03d64ce8a96",
+      "output": {
+        "sha256": "4ba3f83471cb3ca6a0dc99608eea66ebdae6b7f6ffff65fc1459c7c2da7055e8",
+        "bytes": 550,
+        "pixel_check": true,
+        "width": 64,
+        "decoded": true,
+        "height": 64
+      }
+    },
+    {
+      "case": "05-invert",
+      "status": "passed",
+      "prompt_id": "53a6f62e-2b08-48c0-85ac-db320ab27107",
+      "output": {
+        "sha256": "7df6a33a1e08270a38e4de50e0960607718514aa30e28dd6af324a85dcaed498",
+        "bytes": 526,
+        "pixel_check": true,
+        "width": 64,
+        "decoded": true,
+        "height": 64
+      }
+    },
+    {
+      "case": "06-red-mask",
+      "status": "passed",
+      "prompt_id": "13a16db2-f066-485e-80f3-429361cb9961",
+      "output": {
+        "sha256": "a19ed3c26caf41947a49772af878cc6016004d513fdc743b7d77cfb79b5d841a",
+        "bytes": 578,
+        "pixel_check": true,
+        "width": 64,
+        "decoded": true,
+        "height": 64
+      }
+    }
+  ],
+  "cli_ui_to_api_match": true,
+  "asset_sha256_before": "9b98c36f57f993992edc60b7e87f9825bdcc6112475811f78ca849bcdeb752fe",
+  "isolated_asset_sha256_before": "9b98c36f57f993992edc60b7e87f9825bdcc6112475811f78ca849bcdeb752fe",
+  "inputs_before": {
+    "01-text-image-api.json": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d",
+    "01-text-image-ui.json": "77dfefa716d1ce294521355e6f5373fab297403939bee480f864aae643816881",
+    "02-image-edit-api.json": "13346b7e322b0002aa8c3fb1c50e97f46c31d46259e3e08c1a1f36f1b4f859c0",
+    "02-image-edit-ui.json": "a6f252f058a1f1df2dbfce9007e00a5e4c038164c1f5ffb5240e0097562892d7",
+    "03-byte-copy.json": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d",
+    "03-upscale-api.json": "2e13cc4abe84ed631b83f3d6605ed469fa84cc148f3483f0c1921da56169d382",
+    "03-upscale-ui.json": "14019a513a952854d5c42217bc8807d92b52bc244fbc9fe102d729dabdd83cca",
+    "04-byte-copy.json": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d",
+    "04-flip-api.json": "3113ef5d9712ac49d84fbd658f10e80fb0fea13954725d90c43f09b31537afd5",
+    "04-flip-ui.json": "f0648c565d8919fb82b92516be7fda29fa01b873f96371d9661ede2356f5d25e",
+    "05-equivalent.json": "1a4ba73cdccfe5a9241f91ae014c374be579fabb711caeb18f69bc907528b6f5",
+    "05-invert-api.json": "5ee92a25f004ee2f337bbbee85ce3b51d7fd02403c034307af1ea80fbafd1acb",
+    "05-invert-ui.json": "152c0ea1e8591d2cdf7b359dc59dc8f1fdf3199af900aa32779282feb9f337fe",
+    "06-equivalent.json": "f77b654fe01ebfa293a5e793f918a553bc5b27d7f3e82e1c4888605ec1b006b2",
+    "06-red-mask-api.json": "42452dcae308f6689d08513155c920e3b758ba364f278f8a3c3a1d322e80d6d4",
+    "06-red-mask-ui.json": "fa4261fbc5022a5b607ac03da3f27ed875dc3e3e0fbe2135f60e165f260c4952",
+    "07-steps-16.json": "48181ee981695e7871a1ed06da3992678395d34d08a469e47fe654eb72af1588",
+    "08-steps-24.json": "731147cc2bfb572edc1e365e0f8e2f18081b7745d1762744aaca93348471293b",
+    "09-missing-node.json": "945fc93ec51f9574345900c354c97996f6dd0a008b4989dbed2f15bc7f68782b",
+    "10-broken.json": "c7cac50e15e9cdda5f6bdf32d944bddf47ce352067e5ba56ba19abb219fe297e"
+  },
+  "inputs_after": {
+    "01-text-image-api.json": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d",
+    "01-text-image-ui.json": "77dfefa716d1ce294521355e6f5373fab297403939bee480f864aae643816881",
+    "02-image-edit-api.json": "13346b7e322b0002aa8c3fb1c50e97f46c31d46259e3e08c1a1f36f1b4f859c0",
+    "02-image-edit-ui.json": "a6f252f058a1f1df2dbfce9007e00a5e4c038164c1f5ffb5240e0097562892d7",
+    "03-byte-copy.json": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d",
+    "03-upscale-api.json": "2e13cc4abe84ed631b83f3d6605ed469fa84cc148f3483f0c1921da56169d382",
+    "03-upscale-ui.json": "14019a513a952854d5c42217bc8807d92b52bc244fbc9fe102d729dabdd83cca",
+    "04-byte-copy.json": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d",
+    "04-flip-api.json": "3113ef5d9712ac49d84fbd658f10e80fb0fea13954725d90c43f09b31537afd5",
+    "04-flip-ui.json": "f0648c565d8919fb82b92516be7fda29fa01b873f96371d9661ede2356f5d25e",
+    "05-equivalent.json": "1a4ba73cdccfe5a9241f91ae014c374be579fabb711caeb18f69bc907528b6f5",
+    "05-invert-api.json": "5ee92a25f004ee2f337bbbee85ce3b51d7fd02403c034307af1ea80fbafd1acb",
+    "05-invert-ui.json": "152c0ea1e8591d2cdf7b359dc59dc8f1fdf3199af900aa32779282feb9f337fe",
+    "06-equivalent.json": "f77b654fe01ebfa293a5e793f918a553bc5b27d7f3e82e1c4888605ec1b006b2",
+    "06-red-mask-api.json": "42452dcae308f6689d08513155c920e3b758ba364f278f8a3c3a1d322e80d6d4",
+    "06-red-mask-ui.json": "fa4261fbc5022a5b607ac03da3f27ed875dc3e3e0fbe2135f60e165f260c4952",
+    "07-steps-16.json": "48181ee981695e7871a1ed06da3992678395d34d08a469e47fe654eb72af1588",
+    "08-steps-24.json": "731147cc2bfb572edc1e365e0f8e2f18081b7745d1762744aaca93348471293b",
+    "09-missing-node.json": "945fc93ec51f9574345900c354c97996f6dd0a008b4989dbed2f15bc7f68782b",
+    "10-broken.json": "c7cac50e15e9cdda5f6bdf32d944bddf47ce352067e5ba56ba19abb219fe297e"
+  },
+  "asset_sha256_after": "9b98c36f57f993992edc60b7e87f9825bdcc6112475811f78ca849bcdeb752fe",
+  "isolated_asset_sha256_after": "9b98c36f57f993992edc60b7e87f9825bdcc6112475811f78ca849bcdeb752fe",
+  "inputs_unchanged": true
+}

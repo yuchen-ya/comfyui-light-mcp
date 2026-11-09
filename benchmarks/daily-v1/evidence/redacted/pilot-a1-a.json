@@ -1,0 +1,65 @@
+{
+  "run_id": "pilot-a1-a",
+  "case_id": "A1",
+  "arm": "A",
+  "stage": "pilot",
+  "repeat": 1,
+  "measured": true,
+  "formal_score": false,
+  "requested_items": 20,
+  "validation": {
+    "status": "not_passed",
+    "duplicate_executions": null,
+    "followup_posts": 0,
+    "errors": [
+      "Full-target observer coverage unavailable; all proxy-scoped checks passed."
+    ]
+  },
+  "captured_post_count": 20,
+  "execution_start_count": 20,
+  "capture_first_post_at": "2026-11-09T07:22:22.159Z",
+  "capture_last_post_at": "2026-11-09T07:23:30.094Z",
+  "mcp_metrics": {
+    "start_time": "2026-11-09T07:21:31.963Z",
+    "execution_start": "2026-11-09T07:22:21.953Z",
+    "end_time": "2026-11-09T07:23:42.290Z",
+    "capability_source": "MCP",
+    "shell_fallback": 0,
+    "direct_api_bypass": 0,
+    "usage": "unavailable",
+    "generation_limit": 20,
+    "submitted_runs": 20,
+    "retries": 0,
+    "errors": [],
+    "tool_counts": {
+      "initialize": 2,
+      "tools/list": 1,
+      "list_workflows": 2,
+      "run_workflow": 1,
+      "get_batch": 9,
+      "get_result": 20
+    },
+    "self_reported": {
+      "shell_invocations": 7,
+      "script_files": 2,
+      "first_recorded_time": "2026-11-09T07:21:31.963Z",
+      "preparation_included": true
+    },
+    "output_bytes": 4710468,
+    "index_verification_time": "2026-11-09T07:23:59.985Z",
+    "index_verification_issues": []
+  },
+  "input_sha256": "cdacebd2968e8455f56844f7de2e0ed0688b32e451edd9bd6793471cb6aea537",
+  "evidence_alias": "LOCAL_PILOT_A1_A_EVIDENCE",
+  "limitations": [
+    "Client identity grouping requires independent raw-log audit; follow-up POST count is bounded by this completed task session.",
+    "Full model usage and generic tool argument/return byte accounting are unavailable."
+  ],
+  "proxy_scoped_machine_validation": {
+    "status": "machine_checks_passed",
+    "duplicate_executions": 0,
+    "followup_posts": 0,
+    "errors": []
+  },
+  "full_scope_duplicate_executions": null
+}

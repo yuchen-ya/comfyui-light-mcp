@@ -1,0 +1,102 @@
+{
+  "scope": "Preflight plus explicitly approved isolated official MCP and comfy-cli installation; no ComfyUI startup, restart, GPU submission, or formal benchmark.",
+  "task005r2": {
+    "validation_evidence": "validated_merge_evidence",
+    "merge_sha": "1903d6b235d0317d5c28a216afff76d288f728c2",
+    "merge_message_reports": "Build, lint, 261 tests including six real ComfyUI end-to-end cases passed.",
+    "review_document": "docs/007-task005r2-review.md records tests passed and originally said awaiting review; subsequent merge describes the integration as validated.",
+    "explicit_acceptance_record": null,
+    "current_candidate_sha": "80fde2807e248d2ea4cc953d8e6e2d69fc704b79",
+    "candidate_frozen_for_benchmark": false,
+    "candidate_note": "Current candidate includes a subsequent v5 legacy writer guard; prior merge test claims do not by themselves establish checks on this later commit."
+  },
+  "official_mcp": {
+    "source_alias": "official-source-checkout",
+    "source_sha": "5e4904fefbd264af04069581da3d3ea879fcab49",
+    "source_worktree_clean": true,
+    "source_project_version": "0.10.0",
+    "source_pyproject_sha256": "3d5952b8f0d6f742e7ca25b9dacb513203fdec07379c04895922f08dfce38268",
+    "dependency_lock_file": null,
+    "installed_runtime": "Installed in isolated official-venv with native Windows Python 3.13.9; pip check passed.",
+    "notes": "Pinned source and declared dependencies installed into isolated venv. The recorded installed versions are an inventory, not a dependency lock with artifact hashes.",
+    "venv_in_source_checkout": false,
+    "venv_scope": "Only direct .venv, venv, and env directories in the source checkout were checked; no machine-wide conclusion.",
+    "resolved_dependencies_evidence": "benchmarks/daily-v1/evidence/redacted/official-dependencies.json"
+  },
+  "comfy_cli": {
+    "path_command_found": false,
+    "comfy_bin_environment_set": false,
+    "actual_binary": "OFFICIAL_VENV/Scripts/comfy.exe",
+    "version": "1.14.0",
+    "notes": "Installed in isolated venv. Parent process PATH did not contain comfy; invocation must explicitly select the isolated binary. The version command was invoked before isolating USERPROFILE; source shows configuration initialization may have created a default user config tmp directory or updated an existing stale background entry. Whether this occurred is unknown."
+  },
+  "environment": {
+    "os": "Windows 11 Pro 10.0.26100",
+    "node_version": "22.22.0",
+    "python_on_path_version": "3.12.11",
+    "python_on_path_pip_available": false,
+    "gpu": "NVIDIA GeForce RTX 5080",
+    "gpu_driver_windows_version": "32.0.16.1692",
+    "comfyui_version": null,
+    "comfyui_sha": "5cc4b870094c89090db54bd8d12649dcaf89f2ba",
+    "torch_cuda": "Torch 2.11.0+cu130; CUDA build 13.0",
+    "manager_enabled": null,
+    "isolated_comfyui_instance_verified": true,
+    "notes": "User identified a ComfyUI checkout and Python environment; no isolated runtime or read-only model sharing has been verified. Dirty source and custom node dependencies must be accounted for before isolation.",
+    "comfyui_checkout_dirty": true,
+    "comfyui_python": "3.10.19",
+    "manager_present": true,
+    "models_readonly_sharing_verified": false,
+    "isolated_instance_evidence": "benchmarks/daily-v1/evidence/redacted/isolated-comfy.json"
+  },
+  "light_mcp": {
+    "package_version": "0.1.0",
+    "package_lock_sha256": "4e95e0e2066cf85aa85f29e50d8aebc306603d33e27aab4dedad9f650e38f37b"
+  },
+  "formal_ab_ready": false,
+  "blockers": [
+    "Freeze exact candidate and environment lock, symmetric task inputs, budgets and runtime contracts.",
+    "Verify A/B one-image connectivity and model availability; model directory is not enforced read-only at OS level.",
+    "A3 requires separately isolated Python and writable custom nodes and prior approval of specific workflow source, node repository or registry pack, versions, dependency installation scope, and restart scope."
+  ],
+  "approval_objects_not_yet_identified": [
+    "A3 workflow source and fixed version; node repository or registry pack and version; dependency installation scope; isolated restart scope."
+  ],
+  "missing_values_policy": "Unknown values are null or explicitly described as unverified; no formal results are implied.",
+  "python_environment_probe": {
+    "scope": "Python 3.12.11 selected by current PATH; importlib.metadata distribution lookup",
+    "distribution_versions": {
+      "comfy-mcp": null,
+      "comfy-cli": null,
+      "mcp": null,
+      "pydantic": null,
+      "anyio": null
+    },
+    "interpretation": "These distributions are not installed in the selected Python environment; other environments were not exhaustively searched."
+  },
+  "workflow_inputs": {
+    "project_example_api_graph": {
+      "logical_alias": "project/workflows/examples/qwen-image.json",
+      "valid_json": true,
+      "api_node_count": 9,
+      "runtime_execution_verified_during_preflight": false
+    },
+    "matching_manifest": {
+      "logical_alias": "project/workflows/examples/qwen-image.manifest.json",
+      "valid_json": true
+    },
+    "ui_export_found_in_workflows": false,
+    "notes": "The example parses as an API-shaped graph. Model availability and current execution are unverified; it is not by itself the full benchmark fixture."
+  },
+  "installation_proposal_requirements": [
+    "Use the existing official-source-checkout at the identified SHA if approved, and select an exact dependency resolution and isolated Python environment before installation.",
+    "Identify an approved exact comfy-cli distribution/source and version satisfying the official checkout requirements; freeze the binary actually invoked by COMFY_BIN.",
+    "Choose an isolated ComfyUI checkout and Python environment with separate writable custom nodes, packages, data and output; identify actual workflow/model availability before any startup or GPU test."
+  ],
+  "cli_isolation": {
+    "config_behavior": "Windows CLI uses os.path.expanduser(\"~\") plus AppData/Local/comfy-cli. ConfigManager may create tmp or write stale background state.",
+    "proposed_process_isolation": "Set USERPROFILE to a per-arm directory before launching server or CLI and precreate AppData/Local; verify actual config resolution with no production environment access. Set COMFY_BIN to OFFICIAL_VENV/Scripts/comfy.exe.",
+    "validated": false
+  },
+  "publication_note": "Public derivative: unrelated local environment inventory and historical configuration timestamps omitted; benchmark-relevant conditions retained."
+}

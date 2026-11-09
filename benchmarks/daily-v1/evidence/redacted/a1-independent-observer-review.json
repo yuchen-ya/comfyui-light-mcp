@@ -1,0 +1,59 @@
+{
+  "scope": "A1 pilot task windows, proxy-observed POST /prompt traffic and direct read-only history checks for indexed prompt IDs",
+  "window_definition": {
+    "A": "2026-11-09T07:21:31.963Z through 2026-11-09T07:23:59.985Z",
+    "B": "2026-11-09T07:25:14.079Z through 2026-11-09T07:27:58.427Z"
+  },
+  "source_aliases": [
+    "A1_PROXY_EVENT_LOG",
+    "A1_A_RESULT_INDEX",
+    "A1_B_RESULT_INDEX",
+    "COMFYUI_HISTORY_BY_PROMPT_ID",
+    "A1_LAUNCH_CONFIGS"
+  ],
+  "checks": {
+    "A": {
+      "index_items": 20,
+      "unique_prompt_ids": 20,
+      "unique_seeds": 20,
+      "proxy_post_requests": 20,
+      "proxy_post_responses": 20,
+      "requests_matched_to_index_by_prompt_text_seed_and_response_id": 20,
+      "unmatched_proxy_requests": 0,
+      "history_records_found": 20,
+      "history_completed_success": 20,
+      "history_prompt_graph_matches_proxy_request": 20,
+      "history_execution_start_events_with_prompt_id_and_timestamp": 20,
+      "history_execution_success_events_with_prompt_id_and_timestamp": 20,
+      "proxy_ws_execution_start_events_for_indexed_ids": 20,
+      "proxy_request_response_or_ws_errors_in_window": 0,
+      "observed_duplicate_executions_via_proxy": 0,
+      "total_duplicate_executions": null
+    },
+    "B": {
+      "index_items": 20,
+      "unique_prompt_ids": 20,
+      "unique_seeds": 20,
+      "proxy_post_requests": 20,
+      "proxy_post_responses": 20,
+      "requests_matched_to_index_by_prompt_text_seed_and_response_id": 20,
+      "unmatched_proxy_requests": 0,
+      "history_records_found": 20,
+      "history_completed_success": 20,
+      "history_prompt_graph_matches_proxy_request": 20,
+      "history_execution_start_events_with_prompt_id_and_timestamp": 20,
+      "history_execution_success_events_with_prompt_id_and_timestamp": 20,
+      "proxy_ws_execution_start_events_for_indexed_ids": 0,
+      "proxy_request_response_or_ws_errors_in_window": 0,
+      "observed_duplicate_executions_via_proxy": 0,
+      "total_duplicate_executions": null
+    }
+  },
+  "interpretation": "No duplicate submissions or extra starts are evident in captured proxy traffic and queried terminal history for indexed handles; with the explicit assumption that all task POST traffic traversed the proxy and no same-handle execution was overwritten in history, a task-scoped duplicate count of zero is supported. Without these assumptions the total duplicate execution count is unobservable and remains null. B has no independent live WebSocket start trace; its start evidence is terminal history, not a live observation. A has 20 live starts for its indexed IDs.",
+  "limitations": [
+    "The passive relay observes only traffic directed through it, not direct calls to ComfyUI or traffic from other clients. Both recorded launch configurations target the relay; these settings alone cannot prove absence of bypass.",
+    "A terminal history record is a current per-handle view, not a guaranteed append-only count of every execution if the same handle is reused or history is overwritten.",
+    "Counts describe the stated time windows, not subsequent runs or all activity on the ComfyUI instance.",
+    "Unobserved errors and executions outside the observer are not ruled out; missing live B WebSocket events do not mean B did not execute."
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "status": "pilot_recorded_formal_not_frozen",
+  "measured_date": "2026-11-09",
+  "arms": {
+    "A": {
+      "git_sha": "80fde2807e248d2ea4cc953d8e6e2d69fc704b79",
+      "package_version": "0.1.0",
+      "runtime_server": {
+        "name": "comfyui-light-mcp",
+        "version": "0.3.0"
+      },
+      "dependency_lock_file": "package-lock.json",
+      "dependency_lock_sha256": "4e95e0e2066cf85aa85f29e50d8aebc306603d33e27aab4dedad9f650e38f37b",
+      "tools_list_sha256": "f8e480d1943c0ab937303a148add70a1feca20cbaa5e113ddc98e61e0ec823f2",
+      "instructions_sha256": "e7a20290aa026ed258318b63ed32c7f1b4b94da0b6f9a990de26bbbc184f4342"
+    },
+    "B": {
+      "git_sha": "5e4904fefbd264af04069581da3d3ea879fcab49",
+      "runtime_server": {
+        "name": "comfy-mcp",
+        "version": "0.10.0"
+      },
+      "comfy_cli_version": "1.14.0",
+      "dependency_lock_file": "official-requirements.lock.txt",
+      "dependency_lock_sha256": "2cef5943fef8cb970afcd00bce808e96ee3e2a375f883caed8ba8d812245b9b0",
+      "tools_list_original_sha256": "d7d6a910e1196d2fe84aea0f09e0c110416e276e037ae66d49f27fdde56ade80",
+      "instructions_original_sha256": "b4384cd86396272090c88c884a590a86663aca839570b4ffa040e97d2f67b122",
+      "comfy_bin": "ISOLATED_OFFICIAL_CLI"
+    }
+  },
+  "agent": {
+    "model": "gpt-6.1-terra",
+    "reasoning_effort": "high",
+    "host_cli_version": "0.166.0-alpha.5.1",
+    "desktop_app_version": null,
+    "temperature": null,
+    "tool_access": "Explicit stdio MCP SDK within generic host tools; fresh child session per task, A1 index follow-up in same session; A4 discovery in another fresh session.",
+    "actual_model_tool_definition_inventory": "unavailable",
+    "tool_lazy_loading_configuration": "unavailable",
+    "compaction": "See host usage records; no conversation memory shared across arms.",
+    "usage": "host_reported_token_count; child request sums independently reconcile to cumulative totals"
+  },
+  "hardware": {
+    "os": "Windows 11 Pro 10.0.26100",
+    "gpu": "NVIDIA GeForce RTX 5080",
+    "driver": "616.92",
+    "node": "22.22.0"
+  },
+  "comfyui": {
+    "git_sha": "5cc4b870094c89090db54bd8d12649dcaf89f2ba",
+    "version": "0.41.0",
+    "python": "3.10.19",
+    "torch": "2.11.0+cu130",
+    "cuda": "13.0",
+    "custom_nodes_enabled": false,
+    "manager_enabled": false,
+    "node_inventory": "evidence/redacted/isolated-comfy.json",
+    "runtime_alias": "ISOLATED_COMFY_BASE",
+    "python_environment": "EXISTING_COMFY_ENV_READ_ONLY_USE",
+    "a3_python_isolation_ready": false,
+    "models": "evidence/redacted/models.json",
+    "output_isolation_limit": "MCP downloads/state are separate; pilot used one shared raw ComfyUI output directory. Formal plan requires separate per-task output directories.",
+    "cache": "A1/A2 each preceded by execution-cache reset/model unload plus 4-step organizer warmup. A4-B KSampler and seven other text-generation nodes were cached."
+  },
+  "inputs_lock_sha256": "be416eb41721eea575336753782f74542e1e7767a717f88401d07e3ae476ba79",
+  "budget_file": "suite.json",
+  "logical_aliases": [
+    "ISOLATED_COMFY_BASE",
+    "EXISTING_COMFY_ENV_READ_ONLY_USE",
+    "READ_ONLY_EXISTING_MODELS",
+    "ISOLATED_OFFICIAL_CLI",
+    "LOCAL_PILOT_EVIDENCE"
+  ],
+  "limitations": [
+    "No separately retained pre-task byte snapshot for pilot templates; final bytes match the independent reconstruction/source.",
+    "Global CLI profile initialization may have occurred for one --version and one --help before isolation; evidence records the uncertainty.",
+    "Pilot backend observation is incomplete. Audit v2 was separately validated after the pilot and does not retroactively fill old measurements."
+  ],
+  "published_inputs_lock_sha256": "fbb4b374489a2c650a4f52601141873c324d0f3f81a89681f0ef4184d11412a5",
+  "publication_note": "inputs_lock_sha256 is the original recorded lock; published_inputs_lock_sha256 checks the public derivative. Runtime hashes are not rewritten to match redacted publication data."
+}

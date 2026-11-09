@@ -1,0 +1,28 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "neutral-input.png"
+    }
+  },
+  "2": {
+    "class_type": "ImageFlip",
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "flip_method": "y-axis: horizontally"
+    }
+  },
+  "3": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "daily-output",
+      "images": [
+        "2",
+        0
+      ]
+    }
+  }
+}

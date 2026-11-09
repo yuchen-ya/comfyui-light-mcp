@@ -1,0 +1,34 @@
+{
+  "status": "blocked_clone_failed",
+  "scope": "A3 isolated baseline preparation; no A3 servers or GPU tasks started",
+  "source_environment": "COMFYUI_STABLE_ENV",
+  "offline": true,
+  "private_conda_cache": {
+    "package_records_found": 17,
+    "package_records_missing": 0,
+    "copied_unpacked_bytes_estimate": 141321177,
+    "copy_elapsed_seconds": 2.5
+  },
+  "env_a": {
+    "clone_exit_code": 1,
+    "clone_elapsed_seconds": 78.1,
+    "error": "Conda OfflineError: attempted remote connection during package extraction despite offline mode. Found extracted cache records were insufficient for this clone.",
+    "partial_environment_retained_for_diagnosis": true,
+    "verified_independent": false
+  },
+  "env_b": {
+    "attempted": false
+  },
+  "comfy_checkouts": {
+    "attempted": false
+  },
+  "dependency_removal": {
+    "attempted": false
+  },
+  "a3_instances_started": false,
+  "network_downloaded": false,
+  "disk_limit_gib": 40,
+  "gpu_budget_images": 104,
+  "note": "A1 pilot was already running while private cache copying and clone scanned/copied files, so CPU and disk activity overlapped the pilot. No formal performance conclusion should rely on this period. Partial A clone was retained, not deleted.",
+  "evidence_recorded_utc": "2026-11-09T07:26:06.783037+00:00"
+}

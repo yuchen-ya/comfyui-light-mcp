@@ -1,0 +1,29 @@
+{
+  "frozen_at": "2026-11-09T08:31:06.617Z",
+  "files": [
+    {
+      "file": "fixtures/a1-items-20.json",
+      "sha256": "cdacebd2968e8455f56844f7de2e0ed0688b32e451edd9bd6793471cb6aea537"
+    },
+    {
+      "file": "fixtures/a2-repeat-1.json",
+      "sha256": "1f2b6cec446ff9ffc6bef1f795579c5940d964ef687db5b2984824e0d6a2cd7f"
+    },
+    {
+      "file": "fixtures/a2-repeat-2.json",
+      "sha256": "369709b7c10f96bd778f64902d2695286bada45e6bc3d726f695f0abd1f52f78"
+    },
+    {
+      "file": "fixtures/quality-rubric.json",
+      "sha256": "bd8e91df12dd65202ae6fda4d96f38d10ed5a1447a6bbb8183252abcd9191f69"
+    },
+    {
+      "file": "fixtures/qwen-fast.json",
+      "sha256": "7def64228a4a403f12b650718b5334b769497b15ce57b53b3180f7f9df115927"
+    },
+    {
+      "file": "fixtures/qwen-fast.manifest.json",
+      "sha256": "476e99310b49cace9e8b5335ac4a7cef8b8d3d7ce45050db55e4641c66105a9c"
+    }
+  ]
+}

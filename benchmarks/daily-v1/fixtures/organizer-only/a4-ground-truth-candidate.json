@@ -1,0 +1,238 @@
+[
+  {
+    "old_path": "01-text-image-api.json",
+    "sha256": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d",
+    "classification": "workflow",
+    "group": {
+      "pair": "text-image",
+      "format": "api"
+    },
+    "disposition": "retain",
+    "source_alias": "local-private-workflow",
+    "status": "candidate_not_run",
+    "source_note": "Historical graph adapted by organizer to current example model files and neutral inputs; not run after adaptation."
+  },
+  {
+    "old_path": "01-text-image-ui.json",
+    "sha256": "77dfefa716d1ce294521355e6f5373fab297403939bee480f864aae643816881",
+    "classification": "workflow",
+    "group": {
+      "pair": "text-image",
+      "format": "ui"
+    },
+    "disposition": "retain",
+    "source_alias": "local-private-workflow",
+    "status": "candidate_not_run",
+    "source_note": "Historical graph adapted by organizer to current example model files and neutral inputs; not run after adaptation."
+  },
+  {
+    "old_path": "02-image-edit-api.json",
+    "sha256": "13346b7e322b0002aa8c3fb1c50e97f46c31d46259e3e08c1a1f36f1b4f859c0",
+    "classification": "workflow",
+    "group": {
+      "pair": "image-edit",
+      "format": "api"
+    },
+    "disposition": "retain",
+    "source_alias": "local-private-workflow",
+    "status": "candidate_not_run",
+    "source_note": "Historical graph adapted by organizer to current example model files and neutral inputs; not run after adaptation."
+  },
+  {
+    "old_path": "02-image-edit-ui.json",
+    "sha256": "a6f252f058a1f1df2dbfce9007e00a5e4c038164c1f5ffb5240e0097562892d7",
+    "classification": "workflow",
+    "group": {
+      "pair": "image-edit",
+      "format": "ui"
+    },
+    "disposition": "retain",
+    "source_alias": "local-private-workflow",
+    "status": "candidate_not_run",
+    "source_note": "Historical graph adapted by organizer to current example model files and neutral inputs; not run after adaptation."
+  },
+  {
+    "old_path": "03-byte-copy.json",
+    "sha256": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d",
+    "classification": "byte_duplicate",
+    "group": {
+      "pair": "text-image",
+      "relationship_to": "01-text-image-api.json"
+    },
+    "disposition": "quarantine",
+    "status": "candidate_not_run"
+  },
+  {
+    "old_path": "04-byte-copy.json",
+    "sha256": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d",
+    "classification": "byte_duplicate",
+    "group": {
+      "pair": "text-image",
+      "relationship_to": "01-text-image-api.json"
+    },
+    "disposition": "quarantine",
+    "status": "candidate_not_run"
+  },
+  {
+    "old_path": "05-equivalent.json",
+    "sha256": "1a4ba73cdccfe5a9241f91ae014c374be579fabb711caeb18f69bc907528b6f5",
+    "classification": "content_equivalent",
+    "group": {
+      "pair": "text-image",
+      "relationship_to": "01-text-image-api.json"
+    },
+    "disposition": "quarantine",
+    "status": "candidate_not_run"
+  },
+  {
+    "old_path": "06-equivalent.json",
+    "sha256": "f77b654fe01ebfa293a5e793f918a553bc5b27d7f3e82e1c4888605ec1b006b2",
+    "classification": "content_equivalent",
+    "group": {
+      "pair": "text-image",
+      "relationship_to": "01-text-image-api.json"
+    },
+    "disposition": "quarantine",
+    "status": "candidate_not_run"
+  },
+  {
+    "old_path": "07-steps-16.json",
+    "sha256": "48181ee981695e7871a1ed06da3992678395d34d08a469e47fe654eb72af1588",
+    "classification": "parameter_variant",
+    "group": {
+      "pair": "text-image",
+      "relationship_to": "01-text-image-api.json"
+    },
+    "disposition": "retain",
+    "status": "candidate_not_run"
+  },
+  {
+    "old_path": "08-steps-24.json",
+    "sha256": "731147cc2bfb572edc1e365e0f8e2f18081b7745d1762744aaca93348471293b",
+    "classification": "parameter_variant",
+    "group": {
+      "pair": "text-image",
+      "relationship_to": "01-text-image-api.json"
+    },
+    "disposition": "retain",
+    "status": "candidate_not_run"
+  },
+  {
+    "old_path": "09-missing-node.json",
+    "sha256": "945fc93ec51f9574345900c354c97996f6dd0a008b4989dbed2f15bc7f68782b",
+    "classification": "missing_node",
+    "group": {
+      "pair": "text-image",
+      "relationship_to": null
+    },
+    "disposition": "quarantine",
+    "status": "candidate_not_run"
+  },
+  {
+    "old_path": "10-broken.json",
+    "sha256": "c7cac50e15e9cdda5f6bdf32d944bddf47ce352067e5ba56ba19abb219fe297e",
+    "classification": "invalid_json",
+    "group": {
+      "pair": null,
+      "relationship_to": null
+    },
+    "disposition": "quarantine",
+    "status": "candidate_not_run"
+  },
+  {
+    "old_path": "03-upscale-api.json",
+    "sha256": "2e13cc4abe84ed631b83f3d6605ed469fa84cc148f3483f0c1921da56169d382",
+    "classification": "workflow",
+    "group": {
+      "pair": "upscale",
+      "format": "api"
+    },
+    "disposition": "retain",
+    "source_alias": "organizer_authored",
+    "status": "candidate_static_node_contract_checked_ui_conversion_and_run_unverified"
+  },
+  {
+    "old_path": "03-upscale-ui.json",
+    "sha256": "14019a513a952854d5c42217bc8807d92b52bc244fbc9fe102d729dabdd83cca",
+    "classification": "workflow",
+    "group": {
+      "pair": "upscale",
+      "format": "ui"
+    },
+    "disposition": "retain",
+    "source_alias": "organizer_authored",
+    "status": "candidate_static_node_contract_checked_ui_conversion_and_run_unverified"
+  },
+  {
+    "old_path": "04-flip-api.json",
+    "sha256": "3113ef5d9712ac49d84fbd658f10e80fb0fea13954725d90c43f09b31537afd5",
+    "classification": "workflow",
+    "group": {
+      "pair": "flip",
+      "format": "api"
+    },
+    "disposition": "retain",
+    "source_alias": "organizer_authored",
+    "status": "candidate_static_node_contract_checked_ui_conversion_and_run_unverified"
+  },
+  {
+    "old_path": "04-flip-ui.json",
+    "sha256": "f0648c565d8919fb82b92516be7fda29fa01b873f96371d9661ede2356f5d25e",
+    "classification": "workflow",
+    "group": {
+      "pair": "flip",
+      "format": "ui"
+    },
+    "disposition": "retain",
+    "source_alias": "organizer_authored",
+    "status": "candidate_static_node_contract_checked_ui_conversion_and_run_unverified"
+  },
+  {
+    "old_path": "05-invert-api.json",
+    "sha256": "5ee92a25f004ee2f337bbbee85ce3b51d7fd02403c034307af1ea80fbafd1acb",
+    "classification": "workflow",
+    "group": {
+      "pair": "invert",
+      "format": "api"
+    },
+    "disposition": "retain",
+    "source_alias": "organizer_authored",
+    "status": "candidate_static_node_contract_checked_ui_conversion_and_run_unverified"
+  },
+  {
+    "old_path": "05-invert-ui.json",
+    "sha256": "152c0ea1e8591d2cdf7b359dc59dc8f1fdf3199af900aa32779282feb9f337fe",
+    "classification": "workflow",
+    "group": {
+      "pair": "invert",
+      "format": "ui"
+    },
+    "disposition": "retain",
+    "source_alias": "organizer_authored",
+    "status": "candidate_static_node_contract_checked_ui_conversion_and_run_unverified"
+  },
+  {
+    "old_path": "06-red-mask-api.json",
+    "sha256": "42452dcae308f6689d08513155c920e3b758ba364f278f8a3c3a1d322e80d6d4",
+    "classification": "workflow",
+    "group": {
+      "pair": "red-mask",
+      "format": "api"
+    },
+    "disposition": "retain",
+    "source_alias": "organizer_authored",
+    "status": "candidate_static_node_contract_checked_ui_conversion_and_run_unverified"
+  },
+  {
+    "old_path": "06-red-mask-ui.json",
+    "sha256": "fa4261fbc5022a5b607ac03da3f27ed875dc3e3e0fbe2135f60e165f260c4952",
+    "classification": "workflow",
+    "group": {
+      "pair": "red-mask",
+      "format": "ui"
+    },
+    "disposition": "retain",
+    "source_alias": "organizer_authored",
+    "status": "candidate_static_node_contract_checked_ui_conversion_and_run_unverified"
+  }
+]

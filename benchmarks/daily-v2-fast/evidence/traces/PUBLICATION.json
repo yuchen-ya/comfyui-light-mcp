@@ -1,0 +1,109 @@
+{
+  "kind": "public_derivative",
+  "description": "Redacted, transformed copies of task-local MCP calls and observer/backend audit traces, not original bytes. Original logs remain private. No missing events have been synthesized.",
+  "redactions": [
+    "Local paths replaced with run/project aliases or [LOCAL_PATH]; private/loopback IP addresses replaced with [LOCAL_ADDRESS].",
+    "Environment maps, credential/account/quota values and CPU/precise RAM/VRAM snapshots are redacted.",
+    "Nested JSON in text is parsed and recursively redacted, then serialized back to a JSON string.",
+    "Backend base64 JSON request/response bodies are decoded to readable *_json fields.",
+    "Record order and non-sensitive measured values are retained; raw hashes and published hashes refer to different byte sequences."
+  ],
+  "files": [
+    {
+      "source_alias": "a2-b-r1/raw-mcp-calls.jsonl",
+      "trace": "a2-b-r1/raw-mcp-calls.jsonl",
+      "source_sha256": "34b3194172bd6ea53fbec736d08bcdadf67275539add878a48a6b034b961372b",
+      "published_sha256": "36605882a6d2a5ceefd4396a30ca61e961ef55afbba080c4ac59c41f6a0af8a5",
+      "source_records": 108,
+      "published_records": 108
+    },
+    {
+      "source_alias": "a2-b-r1/backend-audit.jsonl",
+      "trace": "a2-b-r1/backend-audit.jsonl",
+      "source_sha256": "dc7ca6d37ab4c547480ed60fb9e88de94a87d2d1135e303dc33aca4839ff47a5",
+      "published_sha256": "7da4cfb0c0810e6f26adbdc12f304d6821e2a73b6a20d7eecebffeae3af2713d",
+      "source_records": 85,
+      "published_records": 85
+    },
+    {
+      "source_alias": "a2-a-r1/raw-mcp-calls.jsonl",
+      "trace": "a2-a-r1/raw-mcp-calls.jsonl",
+      "source_sha256": "1308a5eb119a0c42f6b86d288af64c2a70c4e604e2a443bd26b644628e7970e8",
+      "published_sha256": "41efd26b6ccb9749b0fb7b9901d69896b535124ebb0a2204f45f4906174f2577",
+      "source_records": 54,
+      "published_records": 54
+    },
+    {
+      "source_alias": "a2-a-r1/backend-audit.jsonl",
+      "trace": "a2-a-r1/backend-audit.jsonl",
+      "source_sha256": "d8fadbdc1f764b114ba83344c40f4a20e4a105c9b711b3e4743ac5e4f98321c0",
+      "published_sha256": "6a217b18c8e1757307c9766ba1b2974097d86bdf16a401e12e091871ecdf4aec",
+      "source_records": 85,
+      "published_records": 85
+    },
+    {
+      "source_alias": "a1-a-r1/raw-mcp-calls.jsonl",
+      "trace": "a1-a-r1/raw-mcp-calls.jsonl",
+      "source_sha256": "e0ec9937d34446218177966b74d007f0323bada00ef6a1bdc60e4c3729d21b57",
+      "published_sha256": "7ba70103318479d64a810926e65b9ab57685c2b429f97c759e7aac0909cbb56a",
+      "source_records": 54,
+      "published_records": 54
+    },
+    {
+      "source_alias": "a1-a-r1/backend-audit.jsonl",
+      "trace": "a1-a-r1/backend-audit.jsonl",
+      "source_sha256": "ebdce53d79b244aec1de6e19ddd8aae3f0e97f9eefe850a9cd99671738f1625e",
+      "published_sha256": "f17c3e188eeb4c71134cebbacde73efa979294f149e9eca24853044cc1386374",
+      "source_records": 105,
+      "published_records": 105
+    },
+    {
+      "source_alias": "a1-b-r1/raw-mcp-calls.jsonl",
+      "trace": "a1-b-r1/raw-mcp-calls.jsonl",
+      "source_sha256": "0b91af0f102e51f1c9c2a2b336469eac775febd39984ff73af4133c62e7d1f08",
+      "published_sha256": "42ff5ffd17b9f1e103b43deed5b66b80fa77eccc97566c7b4fb31ee4a7048388",
+      "source_records": 128,
+      "published_records": 128
+    },
+    {
+      "source_alias": "a1-b-r1/backend-audit.jsonl",
+      "trace": "a1-b-r1/backend-audit.jsonl",
+      "source_sha256": "a4c0c8db4ad45b92387e2d767c1b95de44822e1a884ff28e60d9405d90b5352b",
+      "published_sha256": "23d8b8cf21c591a5c049c2badede8e1942aebdffb0f517592b85c11770de9894",
+      "source_records": 105,
+      "published_records": 105
+    },
+    {
+      "source_alias": "a2-a-r2/raw-mcp-calls.jsonl",
+      "trace": "a2-a-r2/raw-mcp-calls.jsonl",
+      "source_sha256": "61f529bcc675a60589e8f93b7ff75e1c59f07d7b3462d079cfea73cd63a46712",
+      "published_sha256": "082861c6cc7d876accf01e5601cbe37b72a03389a3a31bc2d5776948d63b85b9",
+      "source_records": 68,
+      "published_records": 68
+    },
+    {
+      "source_alias": "a2-a-r2/backend-audit.jsonl",
+      "trace": "a2-a-r2/backend-audit.jsonl",
+      "source_sha256": "c5de3005fa2151c04cb738809a5f577fc961b92a93dea2865b7b8fe62ce72082",
+      "published_sha256": "6ac7bbef7f59f0c66a5caed59be338436161b313848f1c471e75d3f2255a3f10",
+      "source_records": 85,
+      "published_records": 85
+    },
+    {
+      "source_alias": "a2-b-r2/raw-mcp-calls.jsonl",
+      "trace": "a2-b-r2/raw-mcp-calls.jsonl",
+      "source_sha256": "a8250a540404cb76f964c3e99844ebd45978c9a5cd6d17c0a623e5dbfb9b2992",
+      "published_sha256": "f64a5dea71fe154ae9c1dee07382f0e73a8377be11be3c87cf2ccdef22043426",
+      "source_records": 102,
+      "published_records": 102
+    },
+    {
+      "source_alias": "a2-b-r2/backend-audit.jsonl",
+      "trace": "a2-b-r2/backend-audit.jsonl",
+      "source_sha256": "98dc3ad20bbb08b854a68563c9ce346560327b24725c4d5cab576b0910447aaf",
+      "published_sha256": "47b7a65ca220458e8adfdcb618fb03a7e599566ce397b81ed9cdeac13ddae374",
+      "source_records": 85,
+      "published_records": 85
+    }
+  ]
+}

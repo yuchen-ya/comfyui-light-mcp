@@ -1,0 +1,889 @@
+[
+  {
+    "operation": "initialize",
+    "start": "2026-11-09T07:21:42.381Z",
+    "end": "2026-11-09T07:21:42.564Z",
+    "result": {
+      "serverVersion": {
+        "name": "comfyui-light-mcp",
+        "version": "0.3.0"
+      },
+      "instructions": "ComfyUI 轻量代理：调用你已测试的 ComfyUI 工作流（workflow-first），批量原生（batch-native），输出有界（context-light）。\n\n典型流程：\n1. list_workflows() 查看已注册工作流（名称+一句话）；需要参数细节时传 workflow=<name> 获取完整参数表（类型/必填/默认/枚举/范围）。\n2. run_workflow 提交运行，立即返回 batch_id：\n   - 单运行：run_workflow(workflow, params) → 用 get_result(batch_id, index) 轮询。\n   - 批量：run_workflow(workflow, runs=[{label, params}, ...]) → 用 get_batch(batch_id) 轮询全貌（统计+分页任务列表）。\n3. get_result 在 status=succeeded 后 outputs 即本地绝对路径（默认已下载；AUTO_SAVE_OUTPUTS=false 时查询时按需下载，无 base64）。生成耗时取决于工作流，间隔数秒轮询即可。\n4. 参数只接受 manifest 白名单内的键；未知键/类型错误/超范围会被拒绝并给出期望值——按错误信息修正后重试。批量（runs）下单 run 参数错误记为 invalid job，不影响其余 run；单运行（params）简写则整体报错。\n\n注意：\n- seed 参数传 -1 表示每次随机；实际使用值记录在结果的 params_resolved 中（可复现）。\n- 中断/失败状态语义：cancelled = 用户/外部中断；timeout = 本地超时且远端已确认中断（错误明细含取消结果）；failed = ComfyUI 执行失败；submission_unknown = 提交后结果未知（如网络中断），系统不会自动重提以免重复生成，也持续占用并发窗口，并每 3 秒重新查证。TIMEOUT_UNCONFIRMED 表示远端取消未确认；RESULT_PENDING 表示成功后等待结果。请等待对账或检查远端状态；未排除旧任务仍执行前不要换 key 或创建新 run。\n- 旧数据库缺少历史工作流快照时暂停为 LEGACY_SNAPSHOT_MISSING，不会自动认领当前文件作为旧快照；旧 key 缺请求指纹时报 LEGACY_IDEMPOTENCY_CONFLICT，可用 batch_id 只读查询。\n- status=paused 表示工作流文件在 batch 创建后被修改（WORKFLOW_VERSION_MISMATCH）：系统不会用新版本静默续跑旧 batch，剩余任务已暂停；把工作流内容还原后自动继续，或另建新 batch。\n- 批量默认串行执行（MAX_IN_FLIGHT=1）；失败默认不重试（max_attempts 默认 1），配 max_attempts>1 时重试会用全新 prompt_id 并保留全部 attempt 历史。continue_on_error=false 时：只有远端已确认终止的失败才允许重试，重试执行中也等待其定局，终态失败才放弃剩余任务（在途任务不受影响，照常完成）。\n- idempotency_key 用于安全重试同一请求：同键且请求内容完全一致才返回既有 batch，绝不产生重复生成；同键但内容不同会返回 IDEMPOTENCY_CONFLICT；先确认旧任务状态，再决定是否创建另一请求。\n- 输出文件保留 ComfyUI 原始文件名，按 <输出目录>/<batch_id>/<index>/ 组织。",
+      "capabilities": {
+        "tools": {
+          "listChanged": true
+        }
+      }
+    }
+  },
+  {
+    "operation": "tools/list",
+    "start": "2026-11-09T07:21:42.564Z",
+    "end": "2026-11-09T07:21:42.568Z",
+    "result": {
+      "tools": [
+        {
+          "name": "list_workflows",
+          "description": "列出已注册工作流（名称+描述+参数个数）。传 workflow 名则返回该工作流的完整参数说明（类型/必填/默认/枚举/范围）。",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "workflow": {
+                "type": "string",
+                "description": "可选：工作流名，返回参数详情"
+              }
+            },
+            "additionalProperties": false,
+            "$schema": "htt[LOCAL_PATH]"
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "run_workflow",
+          "description": "提交运行工作流：单运行传 params（P2 兼容），批量传 runs 数组（每项 {label?, params}）。参数只接受 manifest 白名单；单 run 参数错误在批量下记为 invalid job 不影响其他 run，单运行简写则整体报错。可选 idempotency_key（同键重复调用不产生新 batch/新提交）、continue_on_error（默认 true：单任务失败不影响其余）、max_attempts（默认 1 不重试）。立即返回 batch_id，用 get_result（单运行）/ get_batch（批量）轮询。",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "workflow": {
+                "type": "string",
+                "description": "list_workflows 中的名称"
+              },
+              "params": {
+                "type": "object",
+                "additionalProperties": {
+                  "default": {}
+                },
+                "description": "单运行参数集（与 runs 二选一）"
+              },
+              "runs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "description": "可选标记，便于结果对照"
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "default": {}
+                      },
+                      "default": {},
+                      "description": "该运行的参数覆盖集"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "minItems": 1,
+                "maxItems": 200,
+                "description": "批量运行数组（与 params 二选一）；按数组顺序调度执行"
+              },
+              "label": {
+                "type": "string",
+                "description": "单运行时的可选标记"
+              },
+              "idempotency_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "幂等键：同键+相同请求内容重复调用返回既有 batch，不重复提交；同键但内容不同返回 IDEMPOTENCY_CONFLICT"
+              },
+              "continue_on_error": {
+                "type": "boolean",
+                "description": "默认 true；false 时首个失败将放弃该 batch 剩余未提交任务"
+              },
+              "max_attempts": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "description": "失败重试次数上限（含首次共 N 次尝试），默认 1 不重试"
+              }
+            },
+            "required": [
+              "workflow"
+            ],
+            "additionalProperties": false,
+            "$schema": "htt[LOCAL_PATH]"
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "get_result",
+          "description": "查询单个运行的结果与状态；succeeded 后 outputs 为本地绝对路径文件清单（AUTO_SAVE_OUTPUTS=false 时在查询时按需下载）。可用 get_batch 查批量全貌。",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "batch_id": {
+                "type": "string",
+                "description": "run_workflow 返回的 batch_id"
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0,
+                "description": "运行序号（单运行为 0）"
+              },
+              "download": {
+                "type": "boolean",
+                "default": true,
+                "description": "succeeded 且输出未落盘时按需下载（默认 true，幂等）"
+              }
+            },
+            "required": [
+              "batch_id"
+            ],
+            "additionalProperties": false,
+            "$schema": "htt[LOCAL_PATH]"
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        },
+        {
+          "name": "get_batch",
+          "description": "查询批量运行全貌：batch 状态 + 逐状态统计（succeeded/failed/running/queued/pending/invalid/unknown/paused——submission_unknown 与 paused 单列，绝不混入 failed）+ 分页 job 列表（有界字段：状态/attempt/错误摘要/输出数，不含完整参数与日志）。status 可过滤：pending|invalid|submitting|unknown|queued|executing|succeeded|failed|timeout|cancelled|paused。",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "batch_id": {
+                "type": "string",
+                "description": "run_workflow 返回的 batch_id"
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 20,
+                "description": "分页大小，默认 20，上限 100"
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0,
+                "description": "分页偏移，默认 0"
+              },
+              "status": {
+                "type": "string",
+                "description": "可选：按 job 状态过滤列表（统计不受影响）"
+              }
+            },
+            "required": [
+              "batch_id"
+            ],
+            "additionalProperties": false,
+            "$schema": "htt[LOCAL_PATH]"
+          },
+          "execution": {
+            "taskSupport": "forbidden"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "operation": "initialize",
+    "start": "2026-11-09T07:22:21.956Z",
+    "end": "2026-11-09T07:22:22.133Z",
+    "result": {
+      "serverVersion": {
+        "name": "comfyui-light-mcp",
+        "version": "0.3.0"
+      },
+      "instructions": "ComfyUI 轻量代理：调用你已测试的 ComfyUI 工作流（workflow-first），批量原生（batch-native），输出有界（context-light）。\n\n典型流程：\n1. list_workflows() 查看已注册工作流（名称+一句话）；需要参数细节时传 workflow=<name> 获取完整参数表（类型/必填/默认/枚举/范围）。\n2. run_workflow 提交运行，立即返回 batch_id：\n   - 单运行：run_workflow(workflow, params) → 用 get_result(batch_id, index) 轮询。\n   - 批量：run_workflow(workflow, runs=[{label, params}, ...]) → 用 get_batch(batch_id) 轮询全貌（统计+分页任务列表）。\n3. get_result 在 status=succeeded 后 outputs 即本地绝对路径（默认已下载；AUTO_SAVE_OUTPUTS=false 时查询时按需下载，无 base64）。生成耗时取决于工作流，间隔数秒轮询即可。\n4. 参数只接受 manifest 白名单内的键；未知键/类型错误/超范围会被拒绝并给出期望值——按错误信息修正后重试。批量（runs）下单 run 参数错误记为 invalid job，不影响其余 run；单运行（params）简写则整体报错。\n\n注意：\n- seed 参数传 -1 表示每次随机；实际使用值记录在结果的 params_resolved 中（可复现）。\n- 中断/失败状态语义：cancelled = 用户/外部中断；timeout = 本地超时且远端已确认中断（错误明细含取消结果）；failed = ComfyUI 执行失败；submission_unknown = 提交后结果未知（如网络中断），系统不会自动重提以免重复生成，也持续占用并发窗口，并每 3 秒重新查证。TIMEOUT_UNCONFIRMED 表示远端取消未确认；RESULT_PENDING 表示成功后等待结果。请等待对账或检查远端状态；未排除旧任务仍执行前不要换 key 或创建新 run。\n- 旧数据库缺少历史工作流快照时暂停为 LEGACY_SNAPSHOT_MISSING，不会自动认领当前文件作为旧快照；旧 key 缺请求指纹时报 LEGACY_IDEMPOTENCY_CONFLICT，可用 batch_id 只读查询。\n- status=paused 表示工作流文件在 batch 创建后被修改（WORKFLOW_VERSION_MISMATCH）：系统不会用新版本静默续跑旧 batch，剩余任务已暂停；把工作流内容还原后自动继续，或另建新 batch。\n- 批量默认串行执行（MAX_IN_FLIGHT=1）；失败默认不重试（max_attempts 默认 1），配 max_attempts>1 时重试会用全新 prompt_id 并保留全部 attempt 历史。continue_on_error=false 时：只有远端已确认终止的失败才允许重试，重试执行中也等待其定局，终态失败才放弃剩余任务（在途任务不受影响，照常完成）。\n- idempotency_key 用于安全重试同一请求：同键且请求内容完全一致才返回既有 batch，绝不产生重复生成；同键但内容不同会返回 IDEMPOTENCY_CONFLICT；先确认旧任务状态，再决定是否创建另一请求。\n- 输出文件保留 ComfyUI 原始文件名，按 <输出目录>/<batch_id>/<index>/ 组织。",
+      "capabilities": {
+        "tools": {
+          "listChanged": true
+        }
+      }
+    }
+  },
+  {
+    "operation": "list_workflows",
+    "params": {},
+    "start": "2026-11-09T07:22:22.134Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"workflows\":[{\"name\":\"qwen-image-demo\",\"description\":\"Qwen-Image 2.1 文生图示例（512-2048px，euler/simple）\",\"version\":1,\"params\":8}],\"hint\":\"传 workflow=<name> 获取该工作流完整参数说明\"}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:22:22.136Z"
+  },
+  {
+    "operation": "list_workflows",
+    "params": {
+      "workflow": "qwen-image-demo"
+    },
+    "start": "2026-11-09T07:22:22.136Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"name\":\"qwen-image-demo\",\"description\":\"Qwen-Image 2.1 文生图示例（512-2048px，euler/simple）\",\"version\":1,\"params\":[{\"name\":\"prompt\",\"type\":\"string\",\"required\":true,\"description\":\"正向提示词\"},{\"name\":\"negative_prompt\",\"type\":\"string\",\"required\":false,\"default\":\"blurry, low quality\",\"description\":\"负向提示词\"},{\"name\":\"seed\",\"type\":\"integer\",\"required\":false,\"default\":-1,\"min\":-1,\"max\":4294967295,\"seed\":\"-1 = 每次执行随机（实际值记录于结果 params_resolved）\",\"description\":\"-1 = 每次随机；实际值记录于结果 params_resolved\"},{\"name\":\"steps\",\"type\":\"integer\",\"required\":false,\"default\":20,\"min\":1,\"max\":100,\"description\":\"采样步数\"},{\"name\":\"cfg\",\"type\":\"number\",\"required\":false,\"default\":2.5,\"min\":1,\"max\":20,\"step\":0.5,\"description\":\"CFG（对齐 0.5 步长）\"},{\"name\":\"width\",\"type\":\"integer\",\"required\":false,\"default\":512,\"min\":256,\"max\":2048,\"step\":16,\"description\":\"宽度（16px 对齐）\"},{\"name\":\"height\",\"type\":\"integer\",\"required\":false,\"default\":512,\"min\":256,\"max\":2048,\"step\":16,\"description\":\"高度（16px 对齐）\"},{\"name\":\"sampler\",\"type\":\"string\",\"required\":false,\"default\":\"euler\",\"description\":\"采样器（combo：合法值由 ComfyUI 校验，非法值在提交时被拒并返回 node_errors）\"}]}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:22:22.137Z"
+  },
+  {
+    "operation": "run_workflow",
+    "params": {
+      "workflow": "qwen-image-demo",
+      "runs": [
+        {
+          "label": "item-001",
+          "params": {
+            "prompt": "A red cube on a plain background, variation 001",
+            "seed": 100001
+          }
+        },
+        {
+          "label": "item-002",
+          "params": {
+            "prompt": "A blue sphere on a plain background, variation 002",
+            "seed": 100002
+          }
+        },
+        {
+          "label": "item-003",
+          "params": {
+            "prompt": "A green cylinder on a plain background, variation 003",
+            "seed": 100003
+          }
+        },
+        {
+          "label": "item-004",
+          "params": {
+            "prompt": "A yellow cone on a plain background, variation 004",
+            "seed": 100004
+          }
+        },
+        {
+          "label": "item-005",
+          "params": {
+            "prompt": "A orange pyramid on a plain background, variation 005",
+            "seed": 100005
+          }
+        },
+        {
+          "label": "item-006",
+          "params": {
+            "prompt": "A purple torus on a plain background, variation 006",
+            "seed": 100006
+          }
+        },
+        {
+          "label": "item-007",
+          "params": {
+            "prompt": "A white ceramic cup on a plain background, variation 007",
+            "seed": 100007
+          }
+        },
+        {
+          "label": "item-008",
+          "params": {
+            "prompt": "A wooden chair on a plain background, variation 008",
+            "seed": 100008
+          }
+        },
+        {
+          "label": "item-009",
+          "params": {
+            "prompt": "A glass bottle on a plain background, variation 009",
+            "seed": 100009
+          }
+        },
+        {
+          "label": "item-010",
+          "params": {
+            "prompt": "A paper boat on a plain background, variation 010",
+            "seed": 100010
+          }
+        },
+        {
+          "label": "item-011",
+          "params": {
+            "prompt": "A metal key on a plain background, variation 011",
+            "seed": 100011
+          }
+        },
+        {
+          "label": "item-012",
+          "params": {
+            "prompt": "A small clock on a plain background, variation 012",
+            "seed": 100012
+          }
+        },
+        {
+          "label": "item-013",
+          "params": {
+            "prompt": "A stone arch on a plain background, variation 013",
+            "seed": 100013
+          }
+        },
+        {
+          "label": "item-014",
+          "params": {
+            "prompt": "A folded umbrella on a plain background, variation 014",
+            "seed": 100014
+          }
+        },
+        {
+          "label": "item-015",
+          "params": {
+            "prompt": "A woven basket on a plain background, variation 015",
+            "seed": 100015
+          }
+        },
+        {
+          "label": "item-016",
+          "params": {
+            "prompt": "A toy train on a plain background, variation 016",
+            "seed": 100016
+          }
+        },
+        {
+          "label": "item-017",
+          "params": {
+            "prompt": "A leaf on a plain background, variation 017",
+            "seed": 100017
+          }
+        },
+        {
+          "label": "item-018",
+          "params": {
+            "prompt": "A flower on a plain background, variation 018",
+            "seed": 100018
+          }
+        },
+        {
+          "label": "item-019",
+          "params": {
+            "prompt": "A lantern on a plain background, variation 019",
+            "seed": 100019
+          }
+        },
+        {
+          "label": "item-020",
+          "params": {
+            "prompt": "A book on a plain background, variation 020",
+            "seed": 100020
+          }
+        }
+      ],
+      "idempotency_key": "daily-v1-pilot-a1-a",
+      "max_attempts": 1
+    },
+    "start": "2026-11-09T07:22:22.138Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"total\":20,\"invalid\":0,\"reused\":false,\"status\":\"running\",\"next\":\"get_batch(batch_id=\\\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\\\")\"}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:22:22.164Z"
+  },
+  {
+    "operation": "get_batch",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "limit": 20
+    },
+    "start": "2026-11-09T07:22:22.164Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"workflow\":\"qwen-image-demo\",\"status\":\"running\",\"stats\":{\"total\":20,\"succeeded\":0,\"failed\":0,\"running\":1,\"queued\":0,\"pending\":19,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"item-001\",\"status\":\"executing\",\"attempt_no\":1,\"prompt_id\":\"e20fd7a1-5f43-4b44-87d9-604a01b2da89\",\"error\":null,\"outputs_count\":0},{\"index\":1,\"label\":\"item-002\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":2,\"label\":\"item-003\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":3,\"label\":\"item-004\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":4,\"label\":\"item-005\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":5,\"label\":\"item-006\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":6,\"label\":\"item-007\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":7,\"label\":\"item-008\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":8,\"label\":\"item-009\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":9,\"label\":\"item-010\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":10,\"label\":\"item-011\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":11,\"label\":\"item-012\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":12,\"label\":\"item-013\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":13,\"label\":\"item-014\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":14,\"label\":\"item-015\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":15,\"label\":\"item-016\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":16,\"label\":\"item-017\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":17,\"label\":\"item-018\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":18,\"label\":\"item-019\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":19,\"label\":\"item-020\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0}],\"next_offset\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:22:22.166Z"
+  },
+  {
+    "operation": "get_batch",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "limit": 20
+    },
+    "start": "2026-11-09T07:22:32.171Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"workflow\":\"qwen-image-demo\",\"status\":\"running\",\"stats\":{\"total\":20,\"succeeded\":2,\"failed\":0,\"running\":1,\"queued\":0,\"pending\":17,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"item-001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"e20fd7a1-5f43-4b44-87d9-604a01b2da89\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"item-002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"1d5c84ca-5a4b-4985-86ff-741fbd1aa2dd\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"item-003\",\"status\":\"executing\",\"attempt_no\":1,\"prompt_id\":\"d869424f-0376-4f30-8529-a1246a8cd4ad\",\"error\":null,\"outputs_count\":0},{\"index\":3,\"label\":\"item-004\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":4,\"label\":\"item-005\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":5,\"label\":\"item-006\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":6,\"label\":\"item-007\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":7,\"label\":\"item-008\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":8,\"label\":\"item-009\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":9,\"label\":\"item-010\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":10,\"label\":\"item-011\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":11,\"label\":\"item-012\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":12,\"label\":\"item-013\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":13,\"label\":\"item-014\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":14,\"label\":\"item-015\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":15,\"label\":\"item-016\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":16,\"label\":\"item-017\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":17,\"label\":\"item-018\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":18,\"label\":\"item-019\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":19,\"label\":\"item-020\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0}],\"next_offset\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:22:32.172Z"
+  },
+  {
+    "operation": "get_batch",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "limit": 20
+    },
+    "start": "2026-11-09T07:22:42.189Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"workflow\":\"qwen-image-demo\",\"status\":\"running\",\"stats\":{\"total\":20,\"succeeded\":5,\"failed\":0,\"running\":1,\"queued\":0,\"pending\":14,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"item-001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"e20fd7a1-5f43-4b44-87d9-604a01b2da89\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"item-002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"1d5c84ca-5a4b-4985-86ff-741fbd1aa2dd\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"item-003\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"d869424f-0376-4f30-8529-a1246a8cd4ad\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"item-004\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"9ef77b61-dcb5-4e2e-aeb5-97f34cb863e3\",\"error\":null,\"outputs_count\":1},{\"index\":4,\"label\":\"item-005\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"b184a28f-bd09-4dc9-bce9-5d4bdb22c3fb\",\"error\":null,\"outputs_count\":1},{\"index\":5,\"label\":\"item-006\",\"status\":\"executing\",\"attempt_no\":1,\"prompt_id\":\"834c1722-1b47-4fb6-b385-0b344005e2e5\",\"error\":null,\"outputs_count\":0},{\"index\":6,\"label\":\"item-007\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":7,\"label\":\"item-008\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":8,\"label\":\"item-009\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":9,\"label\":\"item-010\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":10,\"label\":\"item-011\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":11,\"label\":\"item-012\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":12,\"label\":\"item-013\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":13,\"label\":\"item-014\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":14,\"label\":\"item-015\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":15,\"label\":\"item-016\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":16,\"label\":\"item-017\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":17,\"label\":\"item-018\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":18,\"label\":\"item-019\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":19,\"label\":\"item-020\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0}],\"next_offset\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:22:42.191Z"
+  },
+  {
+    "operation": "get_batch",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "limit": 20
+    },
+    "start": "2026-11-09T07:22:52.204Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"workflow\":\"qwen-image-demo\",\"status\":\"running\",\"stats\":{\"total\":20,\"succeeded\":8,\"failed\":0,\"running\":1,\"queued\":0,\"pending\":11,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"item-001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"e20fd7a1-5f43-4b44-87d9-604a01b2da89\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"item-002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"1d5c84ca-5a4b-4985-86ff-741fbd1aa2dd\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"item-003\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"d869424f-0376-4f30-8529-a1246a8cd4ad\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"item-004\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"9ef77b61-dcb5-4e2e-aeb5-97f34cb863e3\",\"error\":null,\"outputs_count\":1},{\"index\":4,\"label\":\"item-005\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"b184a28f-bd09-4dc9-bce9-5d4bdb22c3fb\",\"error\":null,\"outputs_count\":1},{\"index\":5,\"label\":\"item-006\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"834c1722-1b47-4fb6-b385-0b344005e2e5\",\"error\":null,\"outputs_count\":1},{\"index\":6,\"label\":\"item-007\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"684626bc-2f8f-48ab-b449-8b25d731a3d1\",\"error\":null,\"outputs_count\":1},{\"index\":7,\"label\":\"item-008\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"2813da0d-4b50-4b77-aa16-e8dcaf423dc0\",\"error\":null,\"outputs_count\":1},{\"index\":8,\"label\":\"item-009\",\"status\":\"executing\",\"attempt_no\":1,\"prompt_id\":\"6005abb7-9e0b-4c59-867a-6dc1c855d804\",\"error\":null,\"outputs_count\":0},{\"index\":9,\"label\":\"item-010\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":10,\"label\":\"item-011\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":11,\"label\":\"item-012\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":12,\"label\":\"item-013\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":13,\"label\":\"item-014\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":14,\"label\":\"item-015\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":15,\"label\":\"item-016\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":16,\"label\":\"item-017\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":17,\"label\":\"item-018\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":18,\"label\":\"item-019\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":19,\"label\":\"item-020\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0}],\"next_offset\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:22:52.205Z"
+  },
+  {
+    "operation": "get_batch",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "limit": 20
+    },
+    "start": "2026-11-09T07:23:02.217Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"workflow\":\"qwen-image-demo\",\"status\":\"running\",\"stats\":{\"total\":20,\"succeeded\":11,\"failed\":0,\"running\":1,\"queued\":0,\"pending\":8,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"item-001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"e20fd7a1-5f43-4b44-87d9-604a01b2da89\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"item-002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"1d5c84ca-5a4b-4985-86ff-741fbd1aa2dd\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"item-003\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"d869424f-0376-4f30-8529-a1246a8cd4ad\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"item-004\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"9ef77b61-dcb5-4e2e-aeb5-97f34cb863e3\",\"error\":null,\"outputs_count\":1},{\"index\":4,\"label\":\"item-005\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"b184a28f-bd09-4dc9-bce9-5d4bdb22c3fb\",\"error\":null,\"outputs_count\":1},{\"index\":5,\"label\":\"item-006\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"834c1722-1b47-4fb6-b385-0b344005e2e5\",\"error\":null,\"outputs_count\":1},{\"index\":6,\"label\":\"item-007\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"684626bc-2f8f-48ab-b449-8b25d731a3d1\",\"error\":null,\"outputs_count\":1},{\"index\":7,\"label\":\"item-008\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"2813da0d-4b50-4b77-aa16-e8dcaf423dc0\",\"error\":null,\"outputs_count\":1},{\"index\":8,\"label\":\"item-009\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"6005abb7-9e0b-4c59-867a-6dc1c855d804\",\"error\":null,\"outputs_count\":1},{\"index\":9,\"label\":\"item-010\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"62691867-202d-4344-8b67-ef88a9727b88\",\"error\":null,\"outputs_count\":1},{\"index\":10,\"label\":\"item-011\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"715ddc9f-0b57-4a97-bfda-4035b843a3b6\",\"error\":null,\"outputs_count\":1},{\"index\":11,\"label\":\"item-012\",\"status\":\"executing\",\"attempt_no\":1,\"prompt_id\":\"6800382d-3404-44f7-9b69-5912a54c0cbe\",\"error\":null,\"outputs_count\":0},{\"index\":12,\"label\":\"item-013\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":13,\"label\":\"item-014\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":14,\"label\":\"item-015\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":15,\"label\":\"item-016\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":16,\"label\":\"item-017\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":17,\"label\":\"item-018\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":18,\"label\":\"item-019\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":19,\"label\":\"item-020\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0}],\"next_offset\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:02.218Z"
+  },
+  {
+    "operation": "get_batch",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "limit": 20
+    },
+    "start": "2026-11-09T07:23:12.225Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"workflow\":\"qwen-image-demo\",\"status\":\"running\",\"stats\":{\"total\":20,\"succeeded\":14,\"failed\":0,\"running\":0,\"queued\":0,\"pending\":6,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"item-001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"e20fd7a1-5f43-4b44-87d9-604a01b2da89\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"item-002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"1d5c84ca-5a4b-4985-86ff-741fbd1aa2dd\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"item-003\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"d869424f-0376-4f30-8529-a1246a8cd4ad\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"item-004\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"9ef77b61-dcb5-4e2e-aeb5-97f34cb863e3\",\"error\":null,\"outputs_count\":1},{\"index\":4,\"label\":\"item-005\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"b184a28f-bd09-4dc9-bce9-5d4bdb22c3fb\",\"error\":null,\"outputs_count\":1},{\"index\":5,\"label\":\"item-006\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"834c1722-1b47-4fb6-b385-0b344005e2e5\",\"error\":null,\"outputs_count\":1},{\"index\":6,\"label\":\"item-007\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"684626bc-2f8f-48ab-b449-8b25d731a3d1\",\"error\":null,\"outputs_count\":1},{\"index\":7,\"label\":\"item-008\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"2813da0d-4b50-4b77-aa16-e8dcaf423dc0\",\"error\":null,\"outputs_count\":1},{\"index\":8,\"label\":\"item-009\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"6005abb7-9e0b-4c59-867a-6dc1c855d804\",\"error\":null,\"outputs_count\":1},{\"index\":9,\"label\":\"item-010\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"62691867-202d-4344-8b67-ef88a9727b88\",\"error\":null,\"outputs_count\":1},{\"index\":10,\"label\":\"item-011\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"715ddc9f-0b57-4a97-bfda-4035b843a3b6\",\"error\":null,\"outputs_count\":1},{\"index\":11,\"label\":\"item-012\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"6800382d-3404-44f7-9b69-5912a54c0cbe\",\"error\":null,\"outputs_count\":1},{\"index\":12,\"label\":\"item-013\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"83db9ce0-35c8-4cac-a7bb-89f33481d218\",\"error\":null,\"outputs_count\":1},{\"index\":13,\"label\":\"item-014\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"b5ba5be2-1ffa-4b5c-9cba-6b44e6c53513\",\"error\":null,\"outputs_count\":1},{\"index\":14,\"label\":\"item-015\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":15,\"label\":\"item-016\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":16,\"label\":\"item-017\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":17,\"label\":\"item-018\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":18,\"label\":\"item-019\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":19,\"label\":\"item-020\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0}],\"next_offset\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:12.227Z"
+  },
+  {
+    "operation": "get_batch",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "limit": 20
+    },
+    "start": "2026-11-09T07:23:22.241Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"workflow\":\"qwen-image-demo\",\"status\":\"running\",\"stats\":{\"total\":20,\"succeeded\":16,\"failed\":0,\"running\":1,\"queued\":0,\"pending\":3,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"item-001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"e20fd7a1-5f43-4b44-87d9-604a01b2da89\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"item-002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"1d5c84ca-5a4b-4985-86ff-741fbd1aa2dd\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"item-003\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"d869424f-0376-4f30-8529-a1246a8cd4ad\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"item-004\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"9ef77b61-dcb5-4e2e-aeb5-97f34cb863e3\",\"error\":null,\"outputs_count\":1},{\"index\":4,\"label\":\"item-005\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"b184a28f-bd09-4dc9-bce9-5d4bdb22c3fb\",\"error\":null,\"outputs_count\":1},{\"index\":5,\"label\":\"item-006\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"834c1722-1b47-4fb6-b385-0b344005e2e5\",\"error\":null,\"outputs_count\":1},{\"index\":6,\"label\":\"item-007\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"684626bc-2f8f-48ab-b449-8b25d731a3d1\",\"error\":null,\"outputs_count\":1},{\"index\":7,\"label\":\"item-008\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"2813da0d-4b50-4b77-aa16-e8dcaf423dc0\",\"error\":null,\"outputs_count\":1},{\"index\":8,\"label\":\"item-009\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"6005abb7-9e0b-4c59-867a-6dc1c855d804\",\"error\":null,\"outputs_count\":1},{\"index\":9,\"label\":\"item-010\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"62691867-202d-4344-8b67-ef88a9727b88\",\"error\":null,\"outputs_count\":1},{\"index\":10,\"label\":\"item-011\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"715ddc9f-0b57-4a97-bfda-4035b843a3b6\",\"error\":null,\"outputs_count\":1},{\"index\":11,\"label\":\"item-012\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"6800382d-3404-44f7-9b69-5912a54c0cbe\",\"error\":null,\"outputs_count\":1},{\"index\":12,\"label\":\"item-013\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"83db9ce0-35c8-4cac-a7bb-89f33481d218\",\"error\":null,\"outputs_count\":1},{\"index\":13,\"label\":\"item-014\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"b5ba5be2-1ffa-4b5c-9cba-6b44e6c53513\",\"error\":null,\"outputs_count\":1},{\"index\":14,\"label\":\"item-015\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"58292fa6-2293-429a-920c-d42800a66dc9\",\"error\":null,\"outputs_count\":1},{\"index\":15,\"label\":\"item-016\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"cae99cc6-afb6-4cd0-b443-049e25a20e43\",\"error\":null,\"outputs_count\":1},{\"index\":16,\"label\":\"item-017\",\"status\":\"executing\",\"attempt_no\":1,\"prompt_id\":\"301415e5-404c-43c6-bda3-5d714a536863\",\"error\":null,\"outputs_count\":0},{\"index\":17,\"label\":\"item-018\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":18,\"label\":\"item-019\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":19,\"label\":\"item-020\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0}],\"next_offset\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:22.243Z"
+  },
+  {
+    "operation": "get_batch",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "limit": 20
+    },
+    "start": "2026-11-09T07:23:32.250Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"workflow\":\"qwen-image-demo\",\"status\":\"running\",\"stats\":{\"total\":20,\"succeeded\":19,\"failed\":0,\"running\":1,\"queued\":0,\"pending\":0,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"item-001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"e20fd7a1-5f43-4b44-87d9-604a01b2da89\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"item-002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"1d5c84ca-5a4b-4985-86ff-741fbd1aa2dd\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"item-003\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"d869424f-0376-4f30-8529-a1246a8cd4ad\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"item-004\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"9ef77b61-dcb5-4e2e-aeb5-97f34cb863e3\",\"error\":null,\"outputs_count\":1},{\"index\":4,\"label\":\"item-005\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"b184a28f-bd09-4dc9-bce9-5d4bdb22c3fb\",\"error\":null,\"outputs_count\":1},{\"index\":5,\"label\":\"item-006\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"834c1722-1b47-4fb6-b385-0b344005e2e5\",\"error\":null,\"outputs_count\":1},{\"index\":6,\"label\":\"item-007\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"684626bc-2f8f-48ab-b449-8b25d731a3d1\",\"error\":null,\"outputs_count\":1},{\"index\":7,\"label\":\"item-008\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"2813da0d-4b50-4b77-aa16-e8dcaf423dc0\",\"error\":null,\"outputs_count\":1},{\"index\":8,\"label\":\"item-009\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"6005abb7-9e0b-4c59-867a-6dc1c855d804\",\"error\":null,\"outputs_count\":1},{\"index\":9,\"label\":\"item-010\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"62691867-202d-4344-8b67-ef88a9727b88\",\"error\":null,\"outputs_count\":1},{\"index\":10,\"label\":\"item-011\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"715ddc9f-0b57-4a97-bfda-4035b843a3b6\",\"error\":null,\"outputs_count\":1},{\"index\":11,\"label\":\"item-012\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"6800382d-3404-44f7-9b69-5912a54c0cbe\",\"error\":null,\"outputs_count\":1},{\"index\":12,\"label\":\"item-013\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"83db9ce0-35c8-4cac-a7bb-89f33481d218\",\"error\":null,\"outputs_count\":1},{\"index\":13,\"label\":\"item-014\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"b5ba5be2-1ffa-4b5c-9cba-6b44e6c53513\",\"error\":null,\"outputs_count\":1},{\"index\":14,\"label\":\"item-015\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"58292fa6-2293-429a-920c-d42800a66dc9\",\"error\":null,\"outputs_count\":1},{\"index\":15,\"label\":\"item-016\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"cae99cc6-afb6-4cd0-b443-049e25a20e43\",\"error\":null,\"outputs_count\":1},{\"index\":16,\"label\":\"item-017\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"301415e5-404c-43c6-bda3-5d714a536863\",\"error\":null,\"outputs_count\":1},{\"index\":17,\"label\":\"item-018\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"501056b4-487b-4cb4-a87a-305a509ef75e\",\"error\":null,\"outputs_count\":1},{\"index\":18,\"label\":\"item-019\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"fd0b1c28-2f45-4887-8941-a7198f1ea70b\",\"error\":null,\"outputs_count\":1},{\"index\":19,\"label\":\"item-020\",\"status\":\"executing\",\"attempt_no\":1,\"prompt_id\":\"517bd0e8-5446-44a5-8777-a8a08270789c\",\"error\":null,\"outputs_count\":0}],\"next_offset\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:32.251Z"
+  },
+  {
+    "operation": "get_batch",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "limit": 20
+    },
+    "start": "2026-11-09T07:23:42.258Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"workflow\":\"qwen-image-demo\",\"status\":\"completed\",\"stats\":{\"total\":20,\"succeeded\":20,\"failed\":0,\"running\":0,\"queued\":0,\"pending\":0,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"item-001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"e20fd7a1-5f43-4b44-87d9-604a01b2da89\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"item-002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"1d5c84ca-5a4b-4985-86ff-741fbd1aa2dd\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"item-003\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"d869424f-0376-4f30-8529-a1246a8cd4ad\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"item-004\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"9ef77b61-dcb5-4e2e-aeb5-97f34cb863e3\",\"error\":null,\"outputs_count\":1},{\"index\":4,\"label\":\"item-005\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"b184a28f-bd09-4dc9-bce9-5d4bdb22c3fb\",\"error\":null,\"outputs_count\":1},{\"index\":5,\"label\":\"item-006\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"834c1722-1b47-4fb6-b385-0b344005e2e5\",\"error\":null,\"outputs_count\":1},{\"index\":6,\"label\":\"item-007\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"684626bc-2f8f-48ab-b449-8b25d731a3d1\",\"error\":null,\"outputs_count\":1},{\"index\":7,\"label\":\"item-008\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"2813da0d-4b50-4b77-aa16-e8dcaf423dc0\",\"error\":null,\"outputs_count\":1},{\"index\":8,\"label\":\"item-009\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"6005abb7-9e0b-4c59-867a-6dc1c855d804\",\"error\":null,\"outputs_count\":1},{\"index\":9,\"label\":\"item-010\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"62691867-202d-4344-8b67-ef88a9727b88\",\"error\":null,\"outputs_count\":1},{\"index\":10,\"label\":\"item-011\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"715ddc9f-0b57-4a97-bfda-4035b843a3b6\",\"error\":null,\"outputs_count\":1},{\"index\":11,\"label\":\"item-012\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"6800382d-3404-44f7-9b69-5912a54c0cbe\",\"error\":null,\"outputs_count\":1},{\"index\":12,\"label\":\"item-013\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"83db9ce0-35c8-4cac-a7bb-89f33481d218\",\"error\":null,\"outputs_count\":1},{\"index\":13,\"label\":\"item-014\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"b5ba5be2-1ffa-4b5c-9cba-6b44e6c53513\",\"error\":null,\"outputs_count\":1},{\"index\":14,\"label\":\"item-015\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"58292fa6-2293-429a-920c-d42800a66dc9\",\"error\":null,\"outputs_count\":1},{\"index\":15,\"label\":\"item-016\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"cae99cc6-afb6-4cd0-b443-049e25a20e43\",\"error\":null,\"outputs_count\":1},{\"index\":16,\"label\":\"item-017\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"301415e5-404c-43c6-bda3-5d714a536863\",\"error\":null,\"outputs_count\":1},{\"index\":17,\"label\":\"item-018\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"501056b4-487b-4cb4-a87a-305a509ef75e\",\"error\":null,\"outputs_count\":1},{\"index\":18,\"label\":\"item-019\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"fd0b1c28-2f45-4887-8941-a7198f1ea70b\",\"error\":null,\"outputs_count\":1},{\"index\":19,\"label\":\"item-020\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"517bd0e8-5446-44a5-8777-a8a08270789c\",\"error\":null,\"outputs_count\":1}],\"next_offset\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.260Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 0
+    },
+    "start": "2026-11-09T07:23:42.261Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":0,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red cube on a plain background, variation 001\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100001,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00004_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/0/qwen-image-demo_00004_.png\",\"bytes\":190090}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.263Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 1
+    },
+    "start": "2026-11-09T07:23:42.263Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":1,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A blue sphere on a plain background, variation 002\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100002,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00005_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/1/qwen-image-demo_00005_.png\",\"bytes\":135912}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.264Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 2
+    },
+    "start": "2026-11-09T07:23:42.265Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":2,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A green cylinder on a plain background, variation 003\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100003,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00006_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/2/qwen-image-demo_00006_.png\",\"bytes\":233851}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.266Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 3
+    },
+    "start": "2026-11-09T07:23:42.266Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":3,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A yellow cone on a plain background, variation 004\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100004,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00007_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/3/qwen-image-demo_00007_.png\",\"bytes\":135132}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.267Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 4
+    },
+    "start": "2026-11-09T07:23:42.268Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":4,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A orange pyramid on a plain background, variation 005\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100005,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00008_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/4/qwen-image-demo_00008_.png\",\"bytes\":192352}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.268Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 5
+    },
+    "start": "2026-11-09T07:23:42.269Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":5,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A purple torus on a plain background, variation 006\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100006,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00009_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/5/qwen-image-demo_00009_.png\",\"bytes\":184540}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.270Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 6
+    },
+    "start": "2026-11-09T07:23:42.270Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":6,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A white ceramic cup on a plain background, variation 007\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100007,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00010_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/6/qwen-image-demo_00010_.png\",\"bytes\":180792}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.271Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 7
+    },
+    "start": "2026-11-09T07:23:42.271Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":7,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A wooden chair on a plain background, variation 008\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100008,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00011_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/7/qwen-image-demo_00011_.png\",\"bytes\":216590}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.272Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 8
+    },
+    "start": "2026-11-09T07:23:42.273Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":8,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A glass bottle on a plain background, variation 009\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100009,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00012_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/8/qwen-image-demo_00012_.png\",\"bytes\":195754}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.274Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 9
+    },
+    "start": "2026-11-09T07:23:42.274Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":9,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A paper boat on a plain background, variation 010\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100010,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00013_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/9/qwen-image-demo_00013_.png\",\"bytes\":207812}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.275Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 10
+    },
+    "start": "2026-11-09T07:23:42.276Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":10,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A metal key on a plain background, variation 011\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100011,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00014_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/10/qwen-image-demo_00014_.png\",\"bytes\":223485}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.276Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 11
+    },
+    "start": "2026-11-09T07:23:42.277Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":11,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A small clock on a plain background, variation 012\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100012,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00015_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/11/qwen-image-demo_00015_.png\",\"bytes\":264247}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.278Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 12
+    },
+    "start": "2026-11-09T07:23:42.278Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":12,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A stone arch on a plain background, variation 013\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100013,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00016_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/12/qwen-image-demo_00016_.png\",\"bytes\":279096}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.279Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 13
+    },
+    "start": "2026-11-09T07:23:42.280Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":13,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A folded umbrella on a plain background, variation 014\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100014,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00017_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/13/qwen-image-demo_00017_.png\",\"bytes\":207629}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.280Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 14
+    },
+    "start": "2026-11-09T07:23:42.281Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":14,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A woven basket on a plain background, variation 015\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100015,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00018_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/14/qwen-image-demo_00018_.png\",\"bytes\":452858}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.282Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 15
+    },
+    "start": "2026-11-09T07:23:42.282Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":15,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A toy train on a plain background, variation 016\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100016,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00019_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/15/qwen-image-demo_00019_.png\",\"bytes\":302560}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.283Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 16
+    },
+    "start": "2026-11-09T07:23:42.283Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":16,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A leaf on a plain background, variation 017\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100017,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00020_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/16/qwen-image-demo_00020_.png\",\"bytes\":329134}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.284Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 17
+    },
+    "start": "2026-11-09T07:23:42.285Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":17,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A flower on a plain background, variation 018\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100018,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00021_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/17/qwen-image-demo_00021_.png\",\"bytes\":343031}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.286Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 18
+    },
+    "start": "2026-11-09T07:23:42.286Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":18,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A lantern on a plain background, variation 019\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100019,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00022_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/18/qwen-image-demo_00022_.png\",\"bytes\":235735}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.287Z"
+  },
+  {
+    "operation": "get_result",
+    "params": {
+      "batch_id": "c3bf9fa3-0fad-4093-946a-ffc3c8d7d284",
+      "index": 19
+    },
+    "start": "2026-11-09T07:23:42.288Z",
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"batch_id\":\"c3bf9fa3-0fad-4093-946a-ffc3c8d7d284\",\"index\":19,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A book on a plain background, variation 020\",\"negative_prompt\":\"blurry, low quality\",\"seed\":100020,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00023_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c3bf9fa3-0fad-4093-946a-ffc3c8d7d284/19/qwen-image-demo_00023_.png\",\"bytes\":199868}],\"error\":null}"
+        }
+      ]
+    },
+    "end": "2026-11-09T07:23:42.289Z"
+  }
+]

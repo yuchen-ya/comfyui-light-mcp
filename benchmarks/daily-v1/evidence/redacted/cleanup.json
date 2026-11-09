@@ -1,0 +1,17 @@
+{
+  "a3_ports_never_started": [
+    8192,
+    8193
+  ],
+  "audit_check_port_8194_already_stopped": true,
+  "extra_conda_workspace_cache_moved_to_private_analysis": true,
+  "production_instance_stopped": false,
+  "partial_a3_clone_retained": true,
+  "checked_at_utc": "2026-11-09T08:13:01.9167484Z",
+  "stopped_ports": [
+    8190,
+    8191
+  ],
+  "task_listeners_stopped": true,
+  "raw_evidence_retained": true
+}

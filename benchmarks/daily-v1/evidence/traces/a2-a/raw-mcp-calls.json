@@ -1,0 +1,1521 @@
+{
+  "calls": [
+    {
+      "name": "initialize",
+      "start": "2026-11-09T07:38:19.693Z",
+      "duration_ms": 189,
+      "result": {
+        "instructions": "ComfyUI 轻量代理：调用你已测试的 ComfyUI 工作流（workflow-first），批量原生（batch-native），输出有界（context-light）。\n\n典型流程：\n1. list_workflows() 查看已注册工作流（名称+一句话）；需要参数细节时传 workflow=<name> 获取完整参数表（类型/必填/默认/枚举/范围）。\n2. run_workflow 提交运行，立即返回 batch_id：\n   - 单运行：run_workflow(workflow, params) → 用 get_result(batch_id, index) 轮询。\n   - 批量：run_workflow(workflow, runs=[{label, params}, ...]) → 用 get_batch(batch_id) 轮询全貌（统计+分页任务列表）。\n3. get_result 在 status=succeeded 后 outputs 即本地绝对路径（默认已下载；AUTO_SAVE_OUTPUTS=false 时查询时按需下载，无 base64）。生成耗时取决于工作流，间隔数秒轮询即可。\n4. 参数只接受 manifest 白名单内的键；未知键/类型错误/超范围会被拒绝并给出期望值——按错误信息修正后重试。批量（runs）下单 run 参数错误记为 invalid job，不影响其余 run；单运行（params）简写则整体报错。\n\n注意：\n- seed 参数传 -1 表示每次随机；实际使用值记录在结果的 params_resolved 中（可复现）。\n- 中断/失败状态语义：cancelled = 用户/外部中断；timeout = 本地超时且远端已确认中断（错误明细含取消结果）；failed = ComfyUI 执行失败；submission_unknown = 提交后结果未知（如网络中断），系统不会自动重提以免重复生成，也持续占用并发窗口，并每 3 秒重新查证。TIMEOUT_UNCONFIRMED 表示远端取消未确认；RESULT_PENDING 表示成功后等待结果。请等待对账或检查远端状态；未排除旧任务仍执行前不要换 key 或创建新 run。\n- 旧数据库缺少历史工作流快照时暂停为 LEGACY_SNAPSHOT_MISSING，不会自动认领当前文件作为旧快照；旧 key 缺请求指纹时报 LEGACY_IDEMPOTENCY_CONFLICT，可用 batch_id 只读查询。\n- status=paused 表示工作流文件在 batch 创建后被修改（WORKFLOW_VERSION_MISMATCH）：系统不会用新版本静默续跑旧 batch，剩余任务已暂停；把工作流内容还原后自动继续，或另建新 batch。\n- 批量默认串行执行（MAX_IN_FLIGHT=1）；失败默认不重试（max_attempts 默认 1），配 max_attempts>1 时重试会用全新 prompt_id 并保留全部 attempt 历史。continue_on_error=false 时：只有远端已确认终止的失败才允许重试，重试执行中也等待其定局，终态失败才放弃剩余任务（在途任务不受影响，照常完成）。\n- idempotency_key 用于安全重试同一请求：同键且请求内容完全一致才返回既有 batch，绝不产生重复生成；同键但内容不同会返回 IDEMPOTENCY_CONFLICT；先确认旧任务状态，再决定是否创建另一请求。\n- 输出文件保留 ComfyUI 原始文件名，按 <输出目录>/<batch_id>/<index>/ 组织。",
+        "serverVersion": {
+          "name": "comfyui-light-mcp",
+          "version": "0.3.0"
+        },
+        "capabilities": {
+          "tools": {
+            "listChanged": true
+          }
+        }
+      }
+    },
+    {
+      "name": "tools/list",
+      "start": "2026-11-09T07:38:19.882Z",
+      "duration_ms": 3,
+      "result": {
+        "tools": [
+          {
+            "name": "list_workflows",
+            "description": "列出已注册工作流（名称+描述+参数个数）。传 workflow 名则返回该工作流的完整参数说明（类型/必填/默认/枚举/范围）。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": {
+                  "type": "string",
+                  "description": "可选：工作流名，返回参数详情"
+                }
+              },
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "run_workflow",
+            "description": "提交运行工作流：单运行传 params（P2 兼容），批量传 runs 数组（每项 {label?, params}）。参数只接受 manifest 白名单；单 run 参数错误在批量下记为 invalid job 不影响其他 run，单运行简写则整体报错。可选 idempotency_key（同键重复调用不产生新 batch/新提交）、continue_on_error（默认 true：单任务失败不影响其余）、max_attempts（默认 1 不重试）。立即返回 batch_id，用 get_result（单运行）/ get_batch（批量）轮询。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": {
+                  "type": "string",
+                  "description": "list_workflows 中的名称"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "default": {}
+                  },
+                  "description": "单运行参数集（与 runs 二选一）"
+                },
+                "runs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "maxLength": 200,
+                        "description": "可选标记，便于结果对照"
+                      },
+                      "params": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "default": {}
+                        },
+                        "default": {},
+                        "description": "该运行的参数覆盖集"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "description": "批量运行数组（与 params 二选一）；按数组顺序调度执行"
+                },
+                "label": {
+                  "type": "string",
+                  "description": "单运行时的可选标记"
+                },
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "幂等键：同键+相同请求内容重复调用返回既有 batch，不重复提交；同键但内容不同返回 IDEMPOTENCY_CONFLICT"
+                },
+                "continue_on_error": {
+                  "type": "boolean",
+                  "description": "默认 true；false 时首个失败将放弃该 batch 剩余未提交任务"
+                },
+                "max_attempts": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 5,
+                  "description": "失败重试次数上限（含首次共 N 次尝试），默认 1 不重试"
+                }
+              },
+              "required": [
+                "workflow"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "get_result",
+            "description": "查询单个运行的结果与状态；succeeded 后 outputs 为本地绝对路径文件清单（AUTO_SAVE_OUTPUTS=false 时在查询时按需下载）。可用 get_batch 查批量全貌。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "batch_id": {
+                  "type": "string",
+                  "description": "run_workflow 返回的 batch_id"
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 0,
+                  "description": "运行序号（单运行为 0）"
+                },
+                "download": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "succeeded 且输出未落盘时按需下载（默认 true，幂等）"
+                }
+              },
+              "required": [
+                "batch_id"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "get_batch",
+            "description": "查询批量运行全貌：batch 状态 + 逐状态统计（succeeded/failed/running/queued/pending/invalid/unknown/paused——submission_unknown 与 paused 单列，绝不混入 failed）+ 分页 job 列表（有界字段：状态/attempt/错误摘要/输出数，不含完整参数与日志）。status 可过滤：pending|invalid|submitting|unknown|queued|executing|succeeded|failed|timeout|cancelled|paused。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "batch_id": {
+                  "type": "string",
+                  "description": "run_workflow 返回的 batch_id"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100,
+                  "default": 20,
+                  "description": "分页大小，默认 20，上限 100"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 0,
+                  "description": "分页偏移，默认 0"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "可选：按 job 状态过滤列表（统计不受影响）"
+                }
+              },
+              "required": [
+                "batch_id"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_workflows",
+      "arguments": {},
+      "start": "2026-11-09T07:38:19.885Z",
+      "duration_ms": 3,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"workflows\":[{\"name\":\"qwen-image-demo\",\"description\":\"Qwen-Image 2.1 文生图示例（512-2048px，euler/simple）\",\"version\":1,\"params\":8}],\"hint\":\"传 workflow=<name> 获取该工作流完整参数说明\"}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "initialize",
+      "start": "2026-11-09T07:38:25.906Z",
+      "duration_ms": 179,
+      "result": {
+        "instructions": "ComfyUI 轻量代理：调用你已测试的 ComfyUI 工作流（workflow-first），批量原生（batch-native），输出有界（context-light）。\n\n典型流程：\n1. list_workflows() 查看已注册工作流（名称+一句话）；需要参数细节时传 workflow=<name> 获取完整参数表（类型/必填/默认/枚举/范围）。\n2. run_workflow 提交运行，立即返回 batch_id：\n   - 单运行：run_workflow(workflow, params) → 用 get_result(batch_id, index) 轮询。\n   - 批量：run_workflow(workflow, runs=[{label, params}, ...]) → 用 get_batch(batch_id) 轮询全貌（统计+分页任务列表）。\n3. get_result 在 status=succeeded 后 outputs 即本地绝对路径（默认已下载；AUTO_SAVE_OUTPUTS=false 时查询时按需下载，无 base64）。生成耗时取决于工作流，间隔数秒轮询即可。\n4. 参数只接受 manifest 白名单内的键；未知键/类型错误/超范围会被拒绝并给出期望值——按错误信息修正后重试。批量（runs）下单 run 参数错误记为 invalid job，不影响其余 run；单运行（params）简写则整体报错。\n\n注意：\n- seed 参数传 -1 表示每次随机；实际使用值记录在结果的 params_resolved 中（可复现）。\n- 中断/失败状态语义：cancelled = 用户/外部中断；timeout = 本地超时且远端已确认中断（错误明细含取消结果）；failed = ComfyUI 执行失败；submission_unknown = 提交后结果未知（如网络中断），系统不会自动重提以免重复生成，也持续占用并发窗口，并每 3 秒重新查证。TIMEOUT_UNCONFIRMED 表示远端取消未确认；RESULT_PENDING 表示成功后等待结果。请等待对账或检查远端状态；未排除旧任务仍执行前不要换 key 或创建新 run。\n- 旧数据库缺少历史工作流快照时暂停为 LEGACY_SNAPSHOT_MISSING，不会自动认领当前文件作为旧快照；旧 key 缺请求指纹时报 LEGACY_IDEMPOTENCY_CONFLICT，可用 batch_id 只读查询。\n- status=paused 表示工作流文件在 batch 创建后被修改（WORKFLOW_VERSION_MISMATCH）：系统不会用新版本静默续跑旧 batch，剩余任务已暂停；把工作流内容还原后自动继续，或另建新 batch。\n- 批量默认串行执行（MAX_IN_FLIGHT=1）；失败默认不重试（max_attempts 默认 1），配 max_attempts>1 时重试会用全新 prompt_id 并保留全部 attempt 历史。continue_on_error=false 时：只有远端已确认终止的失败才允许重试，重试执行中也等待其定局，终态失败才放弃剩余任务（在途任务不受影响，照常完成）。\n- idempotency_key 用于安全重试同一请求：同键且请求内容完全一致才返回既有 batch，绝不产生重复生成；同键但内容不同会返回 IDEMPOTENCY_CONFLICT；先确认旧任务状态，再决定是否创建另一请求。\n- 输出文件保留 ComfyUI 原始文件名，按 <输出目录>/<batch_id>/<index>/ 组织。",
+        "serverVersion": {
+          "name": "comfyui-light-mcp",
+          "version": "0.3.0"
+        },
+        "capabilities": {
+          "tools": {
+            "listChanged": true
+          }
+        }
+      }
+    },
+    {
+      "name": "tools/list",
+      "start": "2026-11-09T07:38:26.085Z",
+      "duration_ms": 3,
+      "result": {
+        "tools": [
+          {
+            "name": "list_workflows",
+            "description": "列出已注册工作流（名称+描述+参数个数）。传 workflow 名则返回该工作流的完整参数说明（类型/必填/默认/枚举/范围）。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": {
+                  "type": "string",
+                  "description": "可选：工作流名，返回参数详情"
+                }
+              },
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "run_workflow",
+            "description": "提交运行工作流：单运行传 params（P2 兼容），批量传 runs 数组（每项 {label?, params}）。参数只接受 manifest 白名单；单 run 参数错误在批量下记为 invalid job 不影响其他 run，单运行简写则整体报错。可选 idempotency_key（同键重复调用不产生新 batch/新提交）、continue_on_error（默认 true：单任务失败不影响其余）、max_attempts（默认 1 不重试）。立即返回 batch_id，用 get_result（单运行）/ get_batch（批量）轮询。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": {
+                  "type": "string",
+                  "description": "list_workflows 中的名称"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "default": {}
+                  },
+                  "description": "单运行参数集（与 runs 二选一）"
+                },
+                "runs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "maxLength": 200,
+                        "description": "可选标记，便于结果对照"
+                      },
+                      "params": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "default": {}
+                        },
+                        "default": {},
+                        "description": "该运行的参数覆盖集"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "description": "批量运行数组（与 params 二选一）；按数组顺序调度执行"
+                },
+                "label": {
+                  "type": "string",
+                  "description": "单运行时的可选标记"
+                },
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "幂等键：同键+相同请求内容重复调用返回既有 batch，不重复提交；同键但内容不同返回 IDEMPOTENCY_CONFLICT"
+                },
+                "continue_on_error": {
+                  "type": "boolean",
+                  "description": "默认 true；false 时首个失败将放弃该 batch 剩余未提交任务"
+                },
+                "max_attempts": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 5,
+                  "description": "失败重试次数上限（含首次共 N 次尝试），默认 1 不重试"
+                }
+              },
+              "required": [
+                "workflow"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "get_result",
+            "description": "查询单个运行的结果与状态；succeeded 后 outputs 为本地绝对路径文件清单（AUTO_SAVE_OUTPUTS=false 时在查询时按需下载）。可用 get_batch 查批量全貌。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "batch_id": {
+                  "type": "string",
+                  "description": "run_workflow 返回的 batch_id"
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 0,
+                  "description": "运行序号（单运行为 0）"
+                },
+                "download": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "succeeded 且输出未落盘时按需下载（默认 true，幂等）"
+                }
+              },
+              "required": [
+                "batch_id"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "get_batch",
+            "description": "查询批量运行全貌：batch 状态 + 逐状态统计（succeeded/failed/running/queued/pending/invalid/unknown/paused——submission_unknown 与 paused 单列，绝不混入 failed）+ 分页 job 列表（有界字段：状态/attempt/错误摘要/输出数，不含完整参数与日志）。status 可过滤：pending|invalid|submitting|unknown|queued|executing|succeeded|failed|timeout|cancelled|paused。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "batch_id": {
+                  "type": "string",
+                  "description": "run_workflow 返回的 batch_id"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100,
+                  "default": 20,
+                  "description": "分页大小，默认 20，上限 100"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 0,
+                  "description": "分页偏移，默认 0"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "可选：按 job 状态过滤列表（统计不受影响）"
+                }
+              },
+              "required": [
+                "batch_id"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_workflows",
+      "arguments": {
+        "workflow": "qwen-image-demo"
+      },
+      "start": "2026-11-09T07:38:26.088Z",
+      "duration_ms": 3,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"name\":\"qwen-image-demo\",\"description\":\"Qwen-Image 2.1 文生图示例（512-2048px，euler/simple）\",\"version\":1,\"params\":[{\"name\":\"prompt\",\"type\":\"string\",\"required\":true,\"description\":\"正向提示词\"},{\"name\":\"negative_prompt\",\"type\":\"string\",\"required\":false,\"default\":\"blurry, low quality\",\"description\":\"负向提示词\"},{\"name\":\"seed\",\"type\":\"integer\",\"required\":false,\"default\":-1,\"min\":-1,\"max\":4294967295,\"seed\":\"-1 = 每次执行随机（实际值记录于结果 params_resolved）\",\"description\":\"-1 = 每次随机；实际值记录于结果 params_resolved\"},{\"name\":\"steps\",\"type\":\"integer\",\"required\":false,\"default\":20,\"min\":1,\"max\":100,\"description\":\"采样步数\"},{\"name\":\"cfg\",\"type\":\"number\",\"required\":false,\"default\":2.5,\"min\":1,\"max\":20,\"step\":0.5,\"description\":\"CFG（对齐 0.5 步长）\"},{\"name\":\"width\",\"type\":\"integer\",\"required\":false,\"default\":512,\"min\":256,\"max\":2048,\"step\":16,\"description\":\"宽度（16px 对齐）\"},{\"name\":\"height\",\"type\":\"integer\",\"required\":false,\"default\":512,\"min\":256,\"max\":2048,\"step\":16,\"description\":\"高度（16px 对齐）\"},{\"name\":\"sampler\",\"type\":\"string\",\"required\":false,\"default\":\"euler\",\"description\":\"采样器（combo：合法值由 ComfyUI 校验，非法值在提交时被拒并返回 node_errors）\"}]}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "initialize",
+      "start": "2026-11-09T07:38:48.303Z",
+      "duration_ms": 177,
+      "result": {
+        "instructions": "ComfyUI 轻量代理：调用你已测试的 ComfyUI 工作流（workflow-first），批量原生（batch-native），输出有界（context-light）。\n\n典型流程：\n1. list_workflows() 查看已注册工作流（名称+一句话）；需要参数细节时传 workflow=<name> 获取完整参数表（类型/必填/默认/枚举/范围）。\n2. run_workflow 提交运行，立即返回 batch_id：\n   - 单运行：run_workflow(workflow, params) → 用 get_result(batch_id, index) 轮询。\n   - 批量：run_workflow(workflow, runs=[{label, params}, ...]) → 用 get_batch(batch_id) 轮询全貌（统计+分页任务列表）。\n3. get_result 在 status=succeeded 后 outputs 即本地绝对路径（默认已下载；AUTO_SAVE_OUTPUTS=false 时查询时按需下载，无 base64）。生成耗时取决于工作流，间隔数秒轮询即可。\n4. 参数只接受 manifest 白名单内的键；未知键/类型错误/超范围会被拒绝并给出期望值——按错误信息修正后重试。批量（runs）下单 run 参数错误记为 invalid job，不影响其余 run；单运行（params）简写则整体报错。\n\n注意：\n- seed 参数传 -1 表示每次随机；实际使用值记录在结果的 params_resolved 中（可复现）。\n- 中断/失败状态语义：cancelled = 用户/外部中断；timeout = 本地超时且远端已确认中断（错误明细含取消结果）；failed = ComfyUI 执行失败；submission_unknown = 提交后结果未知（如网络中断），系统不会自动重提以免重复生成，也持续占用并发窗口，并每 3 秒重新查证。TIMEOUT_UNCONFIRMED 表示远端取消未确认；RESULT_PENDING 表示成功后等待结果。请等待对账或检查远端状态；未排除旧任务仍执行前不要换 key 或创建新 run。\n- 旧数据库缺少历史工作流快照时暂停为 LEGACY_SNAPSHOT_MISSING，不会自动认领当前文件作为旧快照；旧 key 缺请求指纹时报 LEGACY_IDEMPOTENCY_CONFLICT，可用 batch_id 只读查询。\n- status=paused 表示工作流文件在 batch 创建后被修改（WORKFLOW_VERSION_MISMATCH）：系统不会用新版本静默续跑旧 batch，剩余任务已暂停；把工作流内容还原后自动继续，或另建新 batch。\n- 批量默认串行执行（MAX_IN_FLIGHT=1）；失败默认不重试（max_attempts 默认 1），配 max_attempts>1 时重试会用全新 prompt_id 并保留全部 attempt 历史。continue_on_error=false 时：只有远端已确认终止的失败才允许重试，重试执行中也等待其定局，终态失败才放弃剩余任务（在途任务不受影响，照常完成）。\n- idempotency_key 用于安全重试同一请求：同键且请求内容完全一致才返回既有 batch，绝不产生重复生成；同键但内容不同会返回 IDEMPOTENCY_CONFLICT；先确认旧任务状态，再决定是否创建另一请求。\n- 输出文件保留 ComfyUI 原始文件名，按 <输出目录>/<batch_id>/<index>/ 组织。",
+        "serverVersion": {
+          "name": "comfyui-light-mcp",
+          "version": "0.3.0"
+        },
+        "capabilities": {
+          "tools": {
+            "listChanged": true
+          }
+        }
+      }
+    },
+    {
+      "name": "tools/list",
+      "start": "2026-11-09T07:38:48.480Z",
+      "duration_ms": 3,
+      "result": {
+        "tools": [
+          {
+            "name": "list_workflows",
+            "description": "列出已注册工作流（名称+描述+参数个数）。传 workflow 名则返回该工作流的完整参数说明（类型/必填/默认/枚举/范围）。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": {
+                  "type": "string",
+                  "description": "可选：工作流名，返回参数详情"
+                }
+              },
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "run_workflow",
+            "description": "提交运行工作流：单运行传 params（P2 兼容），批量传 runs 数组（每项 {label?, params}）。参数只接受 manifest 白名单；单 run 参数错误在批量下记为 invalid job 不影响其他 run，单运行简写则整体报错。可选 idempotency_key（同键重复调用不产生新 batch/新提交）、continue_on_error（默认 true：单任务失败不影响其余）、max_attempts（默认 1 不重试）。立即返回 batch_id，用 get_result（单运行）/ get_batch（批量）轮询。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": {
+                  "type": "string",
+                  "description": "list_workflows 中的名称"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "default": {}
+                  },
+                  "description": "单运行参数集（与 runs 二选一）"
+                },
+                "runs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "maxLength": 200,
+                        "description": "可选标记，便于结果对照"
+                      },
+                      "params": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "default": {}
+                        },
+                        "default": {},
+                        "description": "该运行的参数覆盖集"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "description": "批量运行数组（与 params 二选一）；按数组顺序调度执行"
+                },
+                "label": {
+                  "type": "string",
+                  "description": "单运行时的可选标记"
+                },
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "幂等键：同键+相同请求内容重复调用返回既有 batch，不重复提交；同键但内容不同返回 IDEMPOTENCY_CONFLICT"
+                },
+                "continue_on_error": {
+                  "type": "boolean",
+                  "description": "默认 true；false 时首个失败将放弃该 batch 剩余未提交任务"
+                },
+                "max_attempts": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 5,
+                  "description": "失败重试次数上限（含首次共 N 次尝试），默认 1 不重试"
+                }
+              },
+              "required": [
+                "workflow"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "get_result",
+            "description": "查询单个运行的结果与状态；succeeded 后 outputs 为本地绝对路径文件清单（AUTO_SAVE_OUTPUTS=false 时在查询时按需下载）。可用 get_batch 查批量全貌。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "batch_id": {
+                  "type": "string",
+                  "description": "run_workflow 返回的 batch_id"
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 0,
+                  "description": "运行序号（单运行为 0）"
+                },
+                "download": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "succeeded 且输出未落盘时按需下载（默认 true，幂等）"
+                }
+              },
+              "required": [
+                "batch_id"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "get_batch",
+            "description": "查询批量运行全貌：batch 状态 + 逐状态统计（succeeded/failed/running/queued/pending/invalid/unknown/paused——submission_unknown 与 paused 单列，绝不混入 failed）+ 分页 job 列表（有界字段：状态/attempt/错误摘要/输出数，不含完整参数与日志）。status 可过滤：pending|invalid|submitting|unknown|queued|executing|succeeded|failed|timeout|cancelled|paused。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "batch_id": {
+                  "type": "string",
+                  "description": "run_workflow 返回的 batch_id"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100,
+                  "default": 20,
+                  "description": "分页大小，默认 20，上限 100"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 0,
+                  "description": "分页偏移，默认 0"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "可选：按 job 状态过滤列表（统计不受影响）"
+                }
+              },
+              "required": [
+                "batch_id"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "run_workflow",
+      "arguments": {
+        "workflow": "qwen-image-demo",
+        "runs": [
+          {
+            "label": "training-cfg-1-210001",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 12,
+              "cfg": 2,
+              "seed": 210001
+            }
+          },
+          {
+            "label": "training-cfg-1-210002",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 12,
+              "cfg": 2,
+              "seed": 210002
+            }
+          },
+          {
+            "label": "training-cfg-2-210001",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 12,
+              "cfg": 2.5,
+              "seed": 210001
+            }
+          },
+          {
+            "label": "training-cfg-2-210002",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 12,
+              "cfg": 2.5,
+              "seed": 210002
+            }
+          },
+          {
+            "label": "training-cfg-3-210001",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 16,
+              "cfg": 2,
+              "seed": 210001
+            }
+          },
+          {
+            "label": "training-cfg-3-210002",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 16,
+              "cfg": 2,
+              "seed": 210002
+            }
+          },
+          {
+            "label": "training-cfg-4-210001",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 16,
+              "cfg": 2.5,
+              "seed": 210001
+            }
+          },
+          {
+            "label": "training-cfg-4-210002",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 16,
+              "cfg": 2.5,
+              "seed": 210002
+            }
+          },
+          {
+            "label": "training-cfg-5-210001",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 20,
+              "cfg": 2,
+              "seed": 210001
+            }
+          },
+          {
+            "label": "training-cfg-5-210002",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 20,
+              "cfg": 2,
+              "seed": 210002
+            }
+          },
+          {
+            "label": "training-cfg-6-210001",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 20,
+              "cfg": 2.5,
+              "seed": 210001
+            }
+          },
+          {
+            "label": "training-cfg-6-210002",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 20,
+              "cfg": 2.5,
+              "seed": 210002
+            }
+          }
+        ],
+        "idempotency_key": "pilot-a2-a-training",
+        "max_attempts": 1
+      },
+      "start": "2026-11-09T07:38:48.483Z",
+      "duration_ms": 25,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"total\":12,\"invalid\":0,\"reused\":false,\"status\":\"running\",\"next\":\"get_batch(batch_id=\\\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\\\")\"}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_batch",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "limit": 100
+      },
+      "start": "2026-11-09T07:38:58.515Z",
+      "duration_ms": 3,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"workflow\":\"qwen-image-demo\",\"status\":\"running\",\"stats\":{\"total\":12,\"succeeded\":4,\"failed\":0,\"running\":1,\"queued\":0,\"pending\":7,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"training-cfg-1-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"0412e65f-03b5-4c9f-b9da-b0230b4b6465\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"training-cfg-1-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"ed80fd63-0220-43ec-92ef-d300fd4f2a5d\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"training-cfg-2-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"328c63ed-4d3f-446b-acc9-98398f7c0e79\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"training-cfg-2-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"930a2424-f275-453d-b563-81721469d9b7\",\"error\":null,\"outputs_count\":1},{\"index\":4,\"label\":\"training-cfg-3-210001\",\"status\":\"executing\",\"attempt_no\":1,\"prompt_id\":\"38053806-ebf9-49cc-9dd8-216943982c01\",\"error\":null,\"outputs_count\":0},{\"index\":5,\"label\":\"training-cfg-3-210002\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":6,\"label\":\"training-cfg-4-210001\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":7,\"label\":\"training-cfg-4-210002\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":8,\"label\":\"training-cfg-5-210001\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":9,\"label\":\"training-cfg-5-210002\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":10,\"label\":\"training-cfg-6-210001\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":11,\"label\":\"training-cfg-6-210002\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0}],\"next_offset\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_batch",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "limit": 100
+      },
+      "start": "2026-11-09T07:39:08.529Z",
+      "duration_ms": 2,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"workflow\":\"qwen-image-demo\",\"status\":\"running\",\"stats\":{\"total\":12,\"succeeded\":8,\"failed\":0,\"running\":1,\"queued\":0,\"pending\":3,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"training-cfg-1-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"0412e65f-03b5-4c9f-b9da-b0230b4b6465\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"training-cfg-1-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"ed80fd63-0220-43ec-92ef-d300fd4f2a5d\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"training-cfg-2-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"328c63ed-4d3f-446b-acc9-98398f7c0e79\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"training-cfg-2-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"930a2424-f275-453d-b563-81721469d9b7\",\"error\":null,\"outputs_count\":1},{\"index\":4,\"label\":\"training-cfg-3-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"38053806-ebf9-49cc-9dd8-216943982c01\",\"error\":null,\"outputs_count\":1},{\"index\":5,\"label\":\"training-cfg-3-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"ede4837f-2b4b-438f-8244-b1dd5aebd1b7\",\"error\":null,\"outputs_count\":1},{\"index\":6,\"label\":\"training-cfg-4-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"247c8454-3853-45d2-a1d8-2f871f4765a9\",\"error\":null,\"outputs_count\":1},{\"index\":7,\"label\":\"training-cfg-4-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"8b2e86c0-a835-4b2c-a363-50c6f30ba37c\",\"error\":null,\"outputs_count\":1},{\"index\":8,\"label\":\"training-cfg-5-210001\",\"status\":\"executing\",\"attempt_no\":1,\"prompt_id\":\"f24a009e-0219-40e3-bd5a-9755652ca9a5\",\"error\":null,\"outputs_count\":0},{\"index\":9,\"label\":\"training-cfg-5-210002\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":10,\"label\":\"training-cfg-6-210001\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0},{\"index\":11,\"label\":\"training-cfg-6-210002\",\"status\":\"pending\",\"attempt_no\":0,\"prompt_id\":null,\"error\":null,\"outputs_count\":0}],\"next_offset\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_batch",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "limit": 100
+      },
+      "start": "2026-11-09T07:39:18.541Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"workflow\":\"qwen-image-demo\",\"status\":\"running\",\"stats\":{\"total\":12,\"succeeded\":11,\"failed\":0,\"running\":1,\"queued\":0,\"pending\":0,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"training-cfg-1-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"0412e65f-03b5-4c9f-b9da-b0230b4b6465\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"training-cfg-1-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"ed80fd63-0220-43ec-92ef-d300fd4f2a5d\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"training-cfg-2-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"328c63ed-4d3f-446b-acc9-98398f7c0e79\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"training-cfg-2-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"930a2424-f275-453d-b563-81721469d9b7\",\"error\":null,\"outputs_count\":1},{\"index\":4,\"label\":\"training-cfg-3-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"38053806-ebf9-49cc-9dd8-216943982c01\",\"error\":null,\"outputs_count\":1},{\"index\":5,\"label\":\"training-cfg-3-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"ede4837f-2b4b-438f-8244-b1dd5aebd1b7\",\"error\":null,\"outputs_count\":1},{\"index\":6,\"label\":\"training-cfg-4-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"247c8454-3853-45d2-a1d8-2f871f4765a9\",\"error\":null,\"outputs_count\":1},{\"index\":7,\"label\":\"training-cfg-4-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"8b2e86c0-a835-4b2c-a363-50c6f30ba37c\",\"error\":null,\"outputs_count\":1},{\"index\":8,\"label\":\"training-cfg-5-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"f24a009e-0219-40e3-bd5a-9755652ca9a5\",\"error\":null,\"outputs_count\":1},{\"index\":9,\"label\":\"training-cfg-5-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"03a0bac9-a079-47a9-8880-c9da2ce6cf87\",\"error\":null,\"outputs_count\":1},{\"index\":10,\"label\":\"training-cfg-6-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"57a435f5-649e-461e-8644-6dcce4c5e740\",\"error\":null,\"outputs_count\":1},{\"index\":11,\"label\":\"training-cfg-6-210002\",\"status\":\"executing\",\"attempt_no\":1,\"prompt_id\":\"e0d40fe9-a6a6-43b9-af73-22b293862d00\",\"error\":null,\"outputs_count\":0}],\"next_offset\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_batch",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "limit": 100
+      },
+      "start": "2026-11-09T07:39:28.546Z",
+      "duration_ms": 2,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"workflow\":\"qwen-image-demo\",\"status\":\"completed\",\"stats\":{\"total\":12,\"succeeded\":12,\"failed\":0,\"running\":0,\"queued\":0,\"pending\":0,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"training-cfg-1-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"0412e65f-03b5-4c9f-b9da-b0230b4b6465\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"training-cfg-1-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"ed80fd63-0220-43ec-92ef-d300fd4f2a5d\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"training-cfg-2-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"328c63ed-4d3f-446b-acc9-98398f7c0e79\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"training-cfg-2-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"930a2424-f275-453d-b563-81721469d9b7\",\"error\":null,\"outputs_count\":1},{\"index\":4,\"label\":\"training-cfg-3-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"38053806-ebf9-49cc-9dd8-216943982c01\",\"error\":null,\"outputs_count\":1},{\"index\":5,\"label\":\"training-cfg-3-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"ede4837f-2b4b-438f-8244-b1dd5aebd1b7\",\"error\":null,\"outputs_count\":1},{\"index\":6,\"label\":\"training-cfg-4-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"247c8454-3853-45d2-a1d8-2f871f4765a9\",\"error\":null,\"outputs_count\":1},{\"index\":7,\"label\":\"training-cfg-4-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"8b2e86c0-a835-4b2c-a363-50c6f30ba37c\",\"error\":null,\"outputs_count\":1},{\"index\":8,\"label\":\"training-cfg-5-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"f24a009e-0219-40e3-bd5a-9755652ca9a5\",\"error\":null,\"outputs_count\":1},{\"index\":9,\"label\":\"training-cfg-5-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"03a0bac9-a079-47a9-8880-c9da2ce6cf87\",\"error\":null,\"outputs_count\":1},{\"index\":10,\"label\":\"training-cfg-6-210001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"57a435f5-649e-461e-8644-6dcce4c5e740\",\"error\":null,\"outputs_count\":1},{\"index\":11,\"label\":\"training-cfg-6-210002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"e0d40fe9-a6a6-43b9-af73-22b293862d00\",\"error\":null,\"outputs_count\":1}],\"next_offset\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 0
+      },
+      "start": "2026-11-09T07:39:28.549Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":0,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210001,\"steps\":12,\"cfg\":2,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00063_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/0/qwen-image-demo_00063_.png\",\"bytes\":252119}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 1
+      },
+      "start": "2026-11-09T07:39:28.550Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":1,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210002,\"steps\":12,\"cfg\":2,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00064_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/1/qwen-image-demo_00064_.png\",\"bytes\":238345}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 2
+      },
+      "start": "2026-11-09T07:39:28.552Z",
+      "duration_ms": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":2,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210001,\"steps\":12,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00065_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/2/qwen-image-demo_00065_.png\",\"bytes\":247892}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 3
+      },
+      "start": "2026-11-09T07:39:28.553Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":3,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210002,\"steps\":12,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00066_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/3/qwen-image-demo_00066_.png\",\"bytes\":222404}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 4
+      },
+      "start": "2026-11-09T07:39:28.554Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":4,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210001,\"steps\":16,\"cfg\":2,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00067_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/4/qwen-image-demo_00067_.png\",\"bytes\":268686}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 5
+      },
+      "start": "2026-11-09T07:39:28.555Z",
+      "duration_ms": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":5,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210002,\"steps\":16,\"cfg\":2,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00068_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/5/qwen-image-demo_00068_.png\",\"bytes\":247807}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 6
+      },
+      "start": "2026-11-09T07:39:28.556Z",
+      "duration_ms": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":6,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210001,\"steps\":16,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00069_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/6/qwen-image-demo_00069_.png\",\"bytes\":260346}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 7
+      },
+      "start": "2026-11-09T07:39:28.556Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":7,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210002,\"steps\":16,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00070_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/7/qwen-image-demo_00070_.png\",\"bytes\":238618}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 8
+      },
+      "start": "2026-11-09T07:39:28.557Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":8,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210001,\"steps\":20,\"cfg\":2,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00071_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/8/qwen-image-demo_00071_.png\",\"bytes\":279625}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 9
+      },
+      "start": "2026-11-09T07:39:28.558Z",
+      "duration_ms": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":9,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210002,\"steps\":20,\"cfg\":2,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00072_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/9/qwen-image-demo_00072_.png\",\"bytes\":259746}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 10
+      },
+      "start": "2026-11-09T07:39:28.559Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":10,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210001,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00073_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/10/qwen-image-demo_00073_.png\",\"bytes\":269047}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "0dfed1b5-e1ee-4c50-9787-fb660bc3428c",
+        "index": 11
+      },
+      "start": "2026-11-09T07:39:28.560Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"0dfed1b5-e1ee-4c50-9787-fb660bc3428c\",\"index\":11,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":210002,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00074_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/0dfed1b5-e1ee-4c50-9787-fb660bc3428c/11/qwen-image-demo_00074_.png\",\"bytes\":246198}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "initialize",
+      "start": "2026-11-09T07:40:14.492Z",
+      "duration_ms": 206,
+      "result": {
+        "instructions": "ComfyUI 轻量代理：调用你已测试的 ComfyUI 工作流（workflow-first），批量原生（batch-native），输出有界（context-light）。\n\n典型流程：\n1. list_workflows() 查看已注册工作流（名称+一句话）；需要参数细节时传 workflow=<name> 获取完整参数表（类型/必填/默认/枚举/范围）。\n2. run_workflow 提交运行，立即返回 batch_id：\n   - 单运行：run_workflow(workflow, params) → 用 get_result(batch_id, index) 轮询。\n   - 批量：run_workflow(workflow, runs=[{label, params}, ...]) → 用 get_batch(batch_id) 轮询全貌（统计+分页任务列表）。\n3. get_result 在 status=succeeded 后 outputs 即本地绝对路径（默认已下载；AUTO_SAVE_OUTPUTS=false 时查询时按需下载，无 base64）。生成耗时取决于工作流，间隔数秒轮询即可。\n4. 参数只接受 manifest 白名单内的键；未知键/类型错误/超范围会被拒绝并给出期望值——按错误信息修正后重试。批量（runs）下单 run 参数错误记为 invalid job，不影响其余 run；单运行（params）简写则整体报错。\n\n注意：\n- seed 参数传 -1 表示每次随机；实际使用值记录在结果的 params_resolved 中（可复现）。\n- 中断/失败状态语义：cancelled = 用户/外部中断；timeout = 本地超时且远端已确认中断（错误明细含取消结果）；failed = ComfyUI 执行失败；submission_unknown = 提交后结果未知（如网络中断），系统不会自动重提以免重复生成，也持续占用并发窗口，并每 3 秒重新查证。TIMEOUT_UNCONFIRMED 表示远端取消未确认；RESULT_PENDING 表示成功后等待结果。请等待对账或检查远端状态；未排除旧任务仍执行前不要换 key 或创建新 run。\n- 旧数据库缺少历史工作流快照时暂停为 LEGACY_SNAPSHOT_MISSING，不会自动认领当前文件作为旧快照；旧 key 缺请求指纹时报 LEGACY_IDEMPOTENCY_CONFLICT，可用 batch_id 只读查询。\n- status=paused 表示工作流文件在 batch 创建后被修改（WORKFLOW_VERSION_MISMATCH）：系统不会用新版本静默续跑旧 batch，剩余任务已暂停；把工作流内容还原后自动继续，或另建新 batch。\n- 批量默认串行执行（MAX_IN_FLIGHT=1）；失败默认不重试（max_attempts 默认 1），配 max_attempts>1 时重试会用全新 prompt_id 并保留全部 attempt 历史。continue_on_error=false 时：只有远端已确认终止的失败才允许重试，重试执行中也等待其定局，终态失败才放弃剩余任务（在途任务不受影响，照常完成）。\n- idempotency_key 用于安全重试同一请求：同键且请求内容完全一致才返回既有 batch，绝不产生重复生成；同键但内容不同会返回 IDEMPOTENCY_CONFLICT；先确认旧任务状态，再决定是否创建另一请求。\n- 输出文件保留 ComfyUI 原始文件名，按 <输出目录>/<batch_id>/<index>/ 组织。",
+        "serverVersion": {
+          "name": "comfyui-light-mcp",
+          "version": "0.3.0"
+        },
+        "capabilities": {
+          "tools": {
+            "listChanged": true
+          }
+        }
+      }
+    },
+    {
+      "name": "tools/list",
+      "start": "2026-11-09T07:40:14.698Z",
+      "duration_ms": 5,
+      "result": {
+        "tools": [
+          {
+            "name": "list_workflows",
+            "description": "列出已注册工作流（名称+描述+参数个数）。传 workflow 名则返回该工作流的完整参数说明（类型/必填/默认/枚举/范围）。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": {
+                  "type": "string",
+                  "description": "可选：工作流名，返回参数详情"
+                }
+              },
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "run_workflow",
+            "description": "提交运行工作流：单运行传 params（P2 兼容），批量传 runs 数组（每项 {label?, params}）。参数只接受 manifest 白名单；单 run 参数错误在批量下记为 invalid job 不影响其他 run，单运行简写则整体报错。可选 idempotency_key（同键重复调用不产生新 batch/新提交）、continue_on_error（默认 true：单任务失败不影响其余）、max_attempts（默认 1 不重试）。立即返回 batch_id，用 get_result（单运行）/ get_batch（批量）轮询。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "workflow": {
+                  "type": "string",
+                  "description": "list_workflows 中的名称"
+                },
+                "params": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "default": {}
+                  },
+                  "description": "单运行参数集（与 runs 二选一）"
+                },
+                "runs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "maxLength": 200,
+                        "description": "可选标记，便于结果对照"
+                      },
+                      "params": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "default": {}
+                        },
+                        "default": {},
+                        "description": "该运行的参数覆盖集"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  "minItems": 1,
+                  "maxItems": 200,
+                  "description": "批量运行数组（与 params 二选一）；按数组顺序调度执行"
+                },
+                "label": {
+                  "type": "string",
+                  "description": "单运行时的可选标记"
+                },
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200,
+                  "description": "幂等键：同键+相同请求内容重复调用返回既有 batch，不重复提交；同键但内容不同返回 IDEMPOTENCY_CONFLICT"
+                },
+                "continue_on_error": {
+                  "type": "boolean",
+                  "description": "默认 true；false 时首个失败将放弃该 batch 剩余未提交任务"
+                },
+                "max_attempts": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 5,
+                  "description": "失败重试次数上限（含首次共 N 次尝试），默认 1 不重试"
+                }
+              },
+              "required": [
+                "workflow"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "get_result",
+            "description": "查询单个运行的结果与状态；succeeded 后 outputs 为本地绝对路径文件清单（AUTO_SAVE_OUTPUTS=false 时在查询时按需下载）。可用 get_batch 查批量全貌。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "batch_id": {
+                  "type": "string",
+                  "description": "run_workflow 返回的 batch_id"
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 0,
+                  "description": "运行序号（单运行为 0）"
+                },
+                "download": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "succeeded 且输出未落盘时按需下载（默认 true，幂等）"
+                }
+              },
+              "required": [
+                "batch_id"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "get_batch",
+            "description": "查询批量运行全貌：batch 状态 + 逐状态统计（succeeded/failed/running/queued/pending/invalid/unknown/paused——submission_unknown 与 paused 单列，绝不混入 failed）+ 分页 job 列表（有界字段：状态/attempt/错误摘要/输出数，不含完整参数与日志）。status 可过滤：pending|invalid|submitting|unknown|queued|executing|succeeded|failed|timeout|cancelled|paused。",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "batch_id": {
+                  "type": "string",
+                  "description": "run_workflow 返回的 batch_id"
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100,
+                  "default": 20,
+                  "description": "分页大小，默认 20，上限 100"
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "default": 0,
+                  "description": "分页偏移，默认 0"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "可选：按 job 状态过滤列表（统计不受影响）"
+                }
+              },
+              "required": [
+                "batch_id"
+              ],
+              "additionalProperties": false,
+              "$schema": "htt[LOCAL_PATH]"
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "run_workflow",
+      "arguments": {
+        "workflow": "qwen-image-demo",
+        "runs": [
+          {
+            "label": "validation-cfg-6-220001",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 20,
+              "cfg": 2.5,
+              "seed": 220001
+            }
+          },
+          {
+            "label": "validation-cfg-6-220002",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 20,
+              "cfg": 2.5,
+              "seed": 220002
+            }
+          },
+          {
+            "label": "validation-cfg-1-220001",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 12,
+              "cfg": 2,
+              "seed": 220001
+            }
+          },
+          {
+            "label": "validation-cfg-1-220002",
+            "params": {
+              "prompt": "A red ceramic cup on a white table, soft daylight",
+              "steps": 12,
+              "cfg": 2,
+              "seed": 220002
+            }
+          }
+        ],
+        "idempotency_key": "pilot-a2-a-validation",
+        "max_attempts": 1
+      },
+      "start": "2026-11-09T07:40:14.703Z",
+      "duration_ms": 30,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"c5bc9915-83b1-4402-a6b2-d60414691716\",\"total\":4,\"invalid\":0,\"reused\":false,\"status\":\"running\",\"next\":\"get_batch(batch_id=\\\"c5bc9915-83b1-4402-a6b2-d60414691716\\\")\"}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_batch",
+      "arguments": {
+        "batch_id": "c5bc9915-83b1-4402-a6b2-d60414691716",
+        "limit": 100
+      },
+      "start": "2026-11-09T07:40:24.740Z",
+      "duration_ms": 2,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"c5bc9915-83b1-4402-a6b2-d60414691716\",\"workflow\":\"qwen-image-demo\",\"status\":\"completed\",\"stats\":{\"total\":4,\"succeeded\":4,\"failed\":0,\"running\":0,\"queued\":0,\"pending\":0,\"invalid\":0,\"unknown\":0,\"paused\":0},\"jobs\":[{\"index\":0,\"label\":\"validation-cfg-6-220001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"3735ee16-ab43-4cf8-8543-318276fb999d\",\"error\":null,\"outputs_count\":1},{\"index\":1,\"label\":\"validation-cfg-6-220002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"6d8c4254-f7b6-4e46-97ef-ba85bbcd323f\",\"error\":null,\"outputs_count\":1},{\"index\":2,\"label\":\"validation-cfg-1-220001\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"8ee8ccf7-6ac4-4fe4-8d56-a4fd2c2a1cac\",\"error\":null,\"outputs_count\":1},{\"index\":3,\"label\":\"validation-cfg-1-220002\",\"status\":\"succeeded\",\"attempt_no\":1,\"prompt_id\":\"45a69bb6-d122-4d17-ad58-49b2761155ef\",\"error\":null,\"outputs_count\":1}],\"next_offset\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "c5bc9915-83b1-4402-a6b2-d60414691716",
+        "index": 0
+      },
+      "start": "2026-11-09T07:40:24.743Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"c5bc9915-83b1-4402-a6b2-d60414691716\",\"index\":0,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":220001,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00075_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c5bc9915-83b1-4402-a6b2-d60414691716/0/qwen-image-demo_00075_.png\",\"bytes\":278676}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "c5bc9915-83b1-4402-a6b2-d60414691716",
+        "index": 1
+      },
+      "start": "2026-11-09T07:40:24.745Z",
+      "duration_ms": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"c5bc9915-83b1-4402-a6b2-d60414691716\",\"index\":1,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":220002,\"steps\":20,\"cfg\":2.5,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00076_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c5bc9915-83b1-4402-a6b2-d60414691716/1/qwen-image-demo_00076_.png\",\"bytes\":251122}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "c5bc9915-83b1-4402-a6b2-d60414691716",
+        "index": 2
+      },
+      "start": "2026-11-09T07:40:24.746Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"c5bc9915-83b1-4402-a6b2-d60414691716\",\"index\":2,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":220001,\"steps\":12,\"cfg\":2,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00077_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c5bc9915-83b1-4402-a6b2-d60414691716/2/qwen-image-demo_00077_.png\",\"bytes\":246582}],\"error\":null}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "get_result",
+      "arguments": {
+        "batch_id": "c5bc9915-83b1-4402-a6b2-d60414691716",
+        "index": 3
+      },
+      "start": "2026-11-09T07:40:24.747Z",
+      "duration_ms": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"batch_id\":\"c5bc9915-83b1-4402-a6b2-d60414691716\",\"index\":3,\"workflow\":\"qwen-image-demo\",\"status\":\"succeeded\",\"params_resolved\":{\"prompt\":\"A red ceramic cup on a white table, soft daylight\",\"negative_prompt\":\"blurry, low quality\",\"seed\":220002,\"steps\":12,\"cfg\":2,\"width\":512,\"height\":512,\"sampler\":\"euler\"},\"outputs\":[{\"kind\":\"image\",\"filename\":\"qwen-image-demo_00078_.png\",\"subfolder\":\"\",\"type\":\"output\",\"local_path\":\"${RUN_DIR}/outputs/c5bc9915-83b1-4402-a6b2-d60414691716/3/qwen-image-demo_00078_.png\",\"bytes\":236022}],\"error\":null}"
+          }
+        ]
+      }
+    }
+  ],
+  "stderr": [
+    "[mcp] stdio server ready (workflows=1, comfyui=connected)\n",
+    "[mcp] stdio server ready (workflows=1, comfyui=connected)\n",
+    "[mcp] stdio server ready (workflows=1, comfyui=connected)\n",
+    "[mcp] stdio server ready (workflows=1, comfyui=connected)\n"
+  ],
+  "discovery_session": {
+    "start": "2026-11-09T07:38:04.540Z",
+    "calls": [
+      {
+        "method": "initialize",
+        "duration_ms": 182,
+        "result": {
+          "instructions": "ComfyUI 轻量代理：调用你已测试的 ComfyUI 工作流（workflow-first），批量原生（batch-native），输出有界（context-light）。\n\n典型流程：\n1. list_workflows() 查看已注册工作流（名称+一句话）；需要参数细节时传 workflow=<name> 获取完整参数表（类型/必填/默认/枚举/范围）。\n2. run_workflow 提交运行，立即返回 batch_id：\n   - 单运行：run_workflow(workflow, params) → 用 get_result(batch_id, index) 轮询。\n   - 批量：run_workflow(workflow, runs=[{label, params}, ...]) → 用 get_batch(batch_id) 轮询全貌（统计+分页任务列表）。\n3. get_result 在 status=succeeded 后 outputs 即本地绝对路径（默认已下载；AUTO_SAVE_OUTPUTS=false 时查询时按需下载，无 base64）。生成耗时取决于工作流，间隔数秒轮询即可。\n4. 参数只接受 manifest 白名单内的键；未知键/类型错误/超范围会被拒绝并给出期望值——按错误信息修正后重试。批量（runs）下单 run 参数错误记为 invalid job，不影响其余 run；单运行（params）简写则整体报错。\n\n注意：\n- seed 参数传 -1 表示每次随机；实际使用值记录在结果的 params_resolved 中（可复现）。\n- 中断/失败状态语义：cancelled = 用户/外部中断；timeout = 本地超时且远端已确认中断（错误明细含取消结果）；failed = ComfyUI 执行失败；submission_unknown = 提交后结果未知（如网络中断），系统不会自动重提以免重复生成，也持续占用并发窗口，并每 3 秒重新查证。TIMEOUT_UNCONFIRMED 表示远端取消未确认；RESULT_PENDING 表示成功后等待结果。请等待对账或检查远端状态；未排除旧任务仍执行前不要换 key 或创建新 run。\n- 旧数据库缺少历史工作流快照时暂停为 LEGACY_SNAPSHOT_MISSING，不会自动认领当前文件作为旧快照；旧 key 缺请求指纹时报 LEGACY_IDEMPOTENCY_CONFLICT，可用 batch_id 只读查询。\n- status=paused 表示工作流文件在 batch 创建后被修改（WORKFLOW_VERSION_MISMATCH）：系统不会用新版本静默续跑旧 batch，剩余任务已暂停；把工作流内容还原后自动继续，或另建新 batch。\n- 批量默认串行执行（MAX_IN_FLIGHT=1）；失败默认不重试（max_attempts 默认 1），配 max_attempts>1 时重试会用全新 prompt_id 并保留全部 attempt 历史。continue_on_error=false 时：只有远端已确认终止的失败才允许重试，重试执行中也等待其定局，终态失败才放弃剩余任务（在途任务不受影响，照常完成）。\n- idempotency_key 用于安全重试同一请求：同键且请求内容完全一致才返回既有 batch，绝不产生重复生成；同键但内容不同会返回 IDEMPOTENCY_CONFLICT；先确认旧任务状态，再决定是否创建另一请求。\n- 输出文件保留 ComfyUI 原始文件名，按 <输出目录>/<batch_id>/<index>/ 组织。",
+          "serverVersion": {
+            "name": "comfyui-light-mcp",
+            "version": "0.3.0"
+          },
+          "capabilities": {
+            "tools": {
+              "listChanged": true
+            }
+          }
+        }
+      },
+      {
+        "method": "tools/list",
+        "duration_ms": 4,
+        "result": {
+          "tools": [
+            {
+              "name": "list_workflows",
+              "description": "列出已注册工作流（名称+描述+参数个数）。传 workflow 名则返回该工作流的完整参数说明（类型/必填/默认/枚举/范围）。",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "workflow": {
+                    "type": "string",
+                    "description": "可选：工作流名，返回参数详情"
+                  }
+                },
+                "additionalProperties": false,
+                "$schema": "htt[LOCAL_PATH]"
+              },
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "run_workflow",
+              "description": "提交运行工作流：单运行传 params（P2 兼容），批量传 runs 数组（每项 {label?, params}）。参数只接受 manifest 白名单；单 run 参数错误在批量下记为 invalid job 不影响其他 run，单运行简写则整体报错。可选 idempotency_key（同键重复调用不产生新 batch/新提交）、continue_on_error（默认 true：单任务失败不影响其余）、max_attempts（默认 1 不重试）。立即返回 batch_id，用 get_result（单运行）/ get_batch（批量）轮询。",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "workflow": {
+                    "type": "string",
+                    "description": "list_workflows 中的名称"
+                  },
+                  "params": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "default": {}
+                    },
+                    "description": "单运行参数集（与 runs 二选一）"
+                  },
+                  "runs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "label": {
+                          "type": "string",
+                          "maxLength": 200,
+                          "description": "可选标记，便于结果对照"
+                        },
+                        "params": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "default": {}
+                          },
+                          "default": {},
+                          "description": "该运行的参数覆盖集"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "minItems": 1,
+                    "maxItems": 200,
+                    "description": "批量运行数组（与 params 二选一）；按数组顺序调度执行"
+                  },
+                  "label": {
+                    "type": "string",
+                    "description": "单运行时的可选标记"
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "幂等键：同键+相同请求内容重复调用返回既有 batch，不重复提交；同键但内容不同返回 IDEMPOTENCY_CONFLICT"
+                  },
+                  "continue_on_error": {
+                    "type": "boolean",
+                    "description": "默认 true；false 时首个失败将放弃该 batch 剩余未提交任务"
+                  },
+                  "max_attempts": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                    "description": "失败重试次数上限（含首次共 N 次尝试），默认 1 不重试"
+                  }
+                },
+                "required": [
+                  "workflow"
+                ],
+                "additionalProperties": false,
+                "$schema": "htt[LOCAL_PATH]"
+              },
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_result",
+              "description": "查询单个运行的结果与状态；succeeded 后 outputs 为本地绝对路径文件清单（AUTO_SAVE_OUTPUTS=false 时在查询时按需下载）。可用 get_batch 查批量全貌。",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "batch_id": {
+                    "type": "string",
+                    "description": "run_workflow 返回的 batch_id"
+                  },
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "运行序号（单运行为 0）"
+                  },
+                  "download": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "succeeded 且输出未落盘时按需下载（默认 true，幂等）"
+                  }
+                },
+                "required": [
+                  "batch_id"
+                ],
+                "additionalProperties": false,
+                "$schema": "htt[LOCAL_PATH]"
+              },
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            },
+            {
+              "name": "get_batch",
+              "description": "查询批量运行全貌：batch 状态 + 逐状态统计（succeeded/failed/running/queued/pending/invalid/unknown/paused——submission_unknown 与 paused 单列，绝不混入 failed）+ 分页 job 列表（有界字段：状态/attempt/错误摘要/输出数，不含完整参数与日志）。status 可过滤：pending|invalid|submitting|unknown|queued|executing|succeeded|failed|timeout|cancelled|paused。",
+              "inputSchema": {
+                "type": "object",
+                "properties": {
+                  "batch_id": {
+                    "type": "string",
+                    "description": "run_workflow 返回的 batch_id"
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "default": 20,
+                    "description": "分页大小，默认 20，上限 100"
+                  },
+                  "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 0,
+                    "description": "分页偏移，默认 0"
+                  },
+                  "status": {
+                    "type": "string",
+                    "description": "可选：按 job 状态过滤列表（统计不受影响）"
+                  }
+                },
+                "required": [
+                  "batch_id"
+                ],
+                "additionalProperties": false,
+                "$schema": "htt[LOCAL_PATH]"
+              },
+              "execution": {
+                "taskSupport": "forbidden"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "stderr": "[mcp] stdio server ready (workflows=1, comfyui=connected)\n",
+    "end": "2026-11-09T07:38:04.730Z"
+  }
+}

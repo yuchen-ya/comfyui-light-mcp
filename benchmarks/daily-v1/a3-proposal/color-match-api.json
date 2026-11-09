@@ -1,0 +1,1 @@
+{"1":{"class_type":"LoadImage","inputs":{"image":"reference.png"}},"2":{"class_type":"LoadImage","inputs":{"image":"target.png"}},"3":{"class_type":"ColorMatch","inputs":{"image_ref":["1",0],"image_target":["2",0],"method":"hm","multithread":false,"strength":1.0}},"4":{"class_type":"SaveImage","inputs":{"filename_prefix":"a3-color-match","images":["3",0]}}}

@@ -1,0 +1,164 @@
+{
+  "status": "pilot_inputs_recorded_formal_inputs_proposed",
+  "files": [
+    {
+      "file": "fixtures/a1/items-100.json",
+      "sha256": "a6de5123dca0716322a88bf269f8b4280ce75717a59792af5a4ae3a8f18b967e"
+    },
+    {
+      "file": "fixtures/a1/items-20.json",
+      "sha256": "cdacebd2968e8455f56844f7de2e0ed0688b32e451edd9bd6793471cb6aea537"
+    },
+    {
+      "file": "fixtures/a2/experiment.json",
+      "sha256": "f724f0fa8420aacbbfa3f19da066e65616a3af47125786e3a862efcd1140f6ab"
+    },
+    {
+      "file": "fixtures/a2/quality-rubric.json",
+      "sha256": "bd8e91df12dd65202ae6fda4d96f38d10ed5a1447a6bbb8183252abcd9191f69"
+    },
+    {
+      "file": "fixtures/a4/input/01-text-image-api.json",
+      "sha256": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d"
+    },
+    {
+      "file": "fixtures/a4/input/01-text-image-ui.json",
+      "sha256": "77dfefa716d1ce294521355e6f5373fab297403939bee480f864aae643816881"
+    },
+    {
+      "file": "fixtures/a4/input/02-image-edit-api.json",
+      "sha256": "13346b7e322b0002aa8c3fb1c50e97f46c31d46259e3e08c1a1f36f1b4f859c0"
+    },
+    {
+      "file": "fixtures/a4/input/02-image-edit-ui.json",
+      "sha256": "a6f252f058a1f1df2dbfce9007e00a5e4c038164c1f5ffb5240e0097562892d7"
+    },
+    {
+      "file": "fixtures/a4/input/03-byte-copy.json",
+      "sha256": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d"
+    },
+    {
+      "file": "fixtures/a4/input/03-upscale-api.json",
+      "sha256": "2e13cc4abe84ed631b83f3d6605ed469fa84cc148f3483f0c1921da56169d382"
+    },
+    {
+      "file": "fixtures/a4/input/03-upscale-ui.json",
+      "sha256": "14019a513a952854d5c42217bc8807d92b52bc244fbc9fe102d729dabdd83cca"
+    },
+    {
+      "file": "fixtures/a4/input/04-byte-copy.json",
+      "sha256": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d"
+    },
+    {
+      "file": "fixtures/a4/input/04-flip-api.json",
+      "sha256": "3113ef5d9712ac49d84fbd658f10e80fb0fea13954725d90c43f09b31537afd5"
+    },
+    {
+      "file": "fixtures/a4/input/04-flip-ui.json",
+      "sha256": "f0648c565d8919fb82b92516be7fda29fa01b873f96371d9661ede2356f5d25e"
+    },
+    {
+      "file": "fixtures/a4/input/05-equivalent.json",
+      "sha256": "1a4ba73cdccfe5a9241f91ae014c374be579fabb711caeb18f69bc907528b6f5"
+    },
+    {
+      "file": "fixtures/a4/input/05-invert-api.json",
+      "sha256": "5ee92a25f004ee2f337bbbee85ce3b51d7fd02403c034307af1ea80fbafd1acb"
+    },
+    {
+      "file": "fixtures/a4/input/05-invert-ui.json",
+      "sha256": "152c0ea1e8591d2cdf7b359dc59dc8f1fdf3199af900aa32779282feb9f337fe"
+    },
+    {
+      "file": "fixtures/a4/input/06-equivalent.json",
+      "sha256": "f77b654fe01ebfa293a5e793f918a553bc5b27d7f3e82e1c4888605ec1b006b2"
+    },
+    {
+      "file": "fixtures/a4/input/06-red-mask-api.json",
+      "sha256": "42452dcae308f6689d08513155c920e3b758ba364f278f8a3c3a1d322e80d6d4"
+    },
+    {
+      "file": "fixtures/a4/input/06-red-mask-ui.json",
+      "sha256": "fa4261fbc5022a5b607ac03da3f27ed875dc3e3e0fbe2135f60e165f260c4952"
+    },
+    {
+      "file": "fixtures/a4/input/07-steps-16.json",
+      "sha256": "48181ee981695e7871a1ed06da3992678395d34d08a469e47fe654eb72af1588"
+    },
+    {
+      "file": "fixtures/a4/input/08-steps-24.json",
+      "sha256": "731147cc2bfb572edc1e365e0f8e2f18081b7745d1762744aaca93348471293b"
+    },
+    {
+      "file": "fixtures/a4/input/09-missing-node.json",
+      "sha256": "945fc93ec51f9574345900c354c97996f6dd0a008b4989dbed2f15bc7f68782b"
+    },
+    {
+      "file": "fixtures/a4/input/10-broken.json",
+      "sha256": "c7cac50e15e9cdda5f6bdf32d944bddf47ce352067e5ba56ba19abb219fe297e"
+    },
+    {
+      "file": "fixtures/a4/neutral-input.png",
+      "sha256": "9b98c36f57f993992edc60b7e87f9825bdcc6112475811f78ca849bcdeb752fe"
+    },
+    {
+      "file": "fixtures/organizer-only/a4-ground-truth-candidate.json",
+      "sha256": "f47ba892137d898b2912826410121b7432378e53431dafa11e5f4245c11a4784",
+      "published_sha256": "061045a0216b22d637a2b2b633171eb6fd1836900a7ccdc0b4ab0cda23d2d55f",
+      "publication_redacted": true
+    },
+    {
+      "file": "prompts/a1-followup.md",
+      "sha256": "9d4587c4f406430e85e751eed8d0c6eedf2d8eaf5f3251cc34578318057140e7"
+    },
+    {
+      "file": "prompts/a1.md",
+      "sha256": "00e09e1ae9fce436ae898eb34b60687b6e623dbbee8691bd9bc2d22877279371"
+    },
+    {
+      "file": "prompts/a2.md",
+      "sha256": "2cdf99064adafa6ed9f9e56d41719e1de82e66fea3576456540eb2bcdc8b12fb"
+    },
+    {
+      "file": "prompts/a3.md",
+      "sha256": "0fd877f5711bf6a118d53da9e2084671de033db911bf12e85b8460949c00485f"
+    },
+    {
+      "file": "prompts/a4-followup.md",
+      "sha256": "16c48f6d3e5ca026dce57af010a6079ad29aa2d2c0e944f17ef3f13ca81f175b"
+    },
+    {
+      "file": "prompts/a4.md",
+      "sha256": "bcc1d1e3c42f05e0231c4ddd7bad178a1716cd94ebf949b71dcfdf6368157c10"
+    },
+    {
+      "file": "prompts/shared.md",
+      "sha256": "22c0c2bb40b3ba8d68582b27e85e7285f0e4e8de10385705cd15690063388b98"
+    },
+    {
+      "file": "formal/fixtures/repeat-1/a1-items.json",
+      "sha256": "ce22fdd0630f2b8f432f5ed8beeb34026135da1db06319f3ae94db022b8e7a99"
+    },
+    {
+      "file": "formal/fixtures/repeat-1/a2-experiment.json",
+      "sha256": "4205bcb779976b2ca0e0731bb8a87ba0d1864564457acceb5f92d28c4d1de6f1"
+    },
+    {
+      "file": "formal/fixtures/repeat-2/a1-items.json",
+      "sha256": "9f2db9aab3a9b42f45e568b87665f3624b3e6c38e416ed880e78465ec44e0ebe"
+    },
+    {
+      "file": "formal/fixtures/repeat-2/a2-experiment.json",
+      "sha256": "564a2c465ad5660e4e67ff034670d0305179ad201d47883a90d07bb67771fd97"
+    },
+    {
+      "file": "formal/fixtures/repeat-3/a1-items.json",
+      "sha256": "c1fb0a77dc69b2172f9ee6a98718ddd8b8bd45d97e5895de627ce94cad87cefb"
+    },
+    {
+      "file": "formal/fixtures/repeat-3/a2-experiment.json",
+      "sha256": "51dea438baa64736fa1a9c75a0362731581d55b6b72b5508aa5c2d854c64f549"
+    }
+  ],
+  "publication_note": "sha256 retains the original recorded input snapshot. published_sha256, when present, identifies its privacy-minimized public derivative."
+}

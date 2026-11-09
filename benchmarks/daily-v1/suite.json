@@ -1,0 +1,145 @@
+{
+  "version": "daily-v1",
+  "status": "pilot_complete_with_limits_formal_pending_budget",
+  "budgets": {
+    "status": "pilot_approved_formal_and_scale_not_frozen",
+    "scope": "Per arm per task run. Freeze symmetrically after pilot and before formal runs. Null means not agreed or measured.",
+    "pilot": {
+      "A1_20": {
+        "max_generations": 20,
+        "max_download_bytes": null,
+        "max_disk_bytes": null,
+        "timeout_seconds": 3600
+      },
+      "A2": {
+        "max_generations": 16,
+        "max_download_bytes": null,
+        "max_disk_bytes": null,
+        "timeout_seconds": 3600
+      },
+      "A3": {
+        "max_generations": 4,
+        "max_download_bytes": null,
+        "max_disk_bytes": null,
+        "timeout_seconds": 3600
+      },
+      "A4": {
+        "max_generations": 3,
+        "max_download_bytes": null,
+        "max_disk_bytes": null,
+        "timeout_seconds": 3600
+      }
+    },
+    "formal": {
+      "A1_20": {
+        "max_generations": null,
+        "max_download_bytes": null,
+        "max_disk_bytes": null,
+        "timeout_seconds": null
+      },
+      "A2": {
+        "max_generations": null,
+        "max_download_bytes": null,
+        "max_disk_bytes": null,
+        "timeout_seconds": null
+      },
+      "A3": {
+        "max_generations": null,
+        "max_download_bytes": null,
+        "max_disk_bytes": null,
+        "timeout_seconds": null
+      },
+      "A4": {
+        "max_generations": null,
+        "max_download_bytes": null,
+        "max_disk_bytes": null,
+        "timeout_seconds": null
+      }
+    },
+    "scale": {
+      "A1_100": {
+        "max_generations": null,
+        "max_download_bytes": null,
+        "max_disk_bytes": null,
+        "timeout_seconds": null
+      },
+      "A1_50_optional_prerun": {
+        "max_generations": null,
+        "max_download_bytes": null,
+        "max_disk_bytes": null,
+        "timeout_seconds": null
+      }
+    },
+    "pilot_overall": {
+      "max_generations": 104,
+      "max_output_bytes": 10737418240,
+      "timeout_seconds_per_task": 3600,
+      "authorized_revisions": [
+        88,
+        104
+      ],
+      "additional_a3_disk_bytes": 42949672960,
+      "a3_download_bytes": 0
+    }
+  },
+  "preparation_costs": {
+    "light_manifest": null,
+    "official_template_slot_mapping": null,
+    "connectivity_checks": null
+  },
+  "cases": {
+    "A1": {
+      "prompt": "prompts/a1.md",
+      "parameters_20": "fixtures/a1/items-20.json",
+      "parameters_100": "fixtures/a1/items-100.json",
+      "workflow": "${WORKFLOW}",
+      "status": "pilot_completed_20_per_arm_observation_limits"
+    },
+    "A2": {
+      "prompt": "prompts/a2.md",
+      "experiment": "fixtures/a2/experiment.json",
+      "rubric": "fixtures/a2/quality-rubric.json",
+      "status": "pilot_completed_16_per_arm_pending_human_quality"
+    },
+    "A3": {
+      "prompt": "prompts/a3.md",
+      "status": "blocked_environment_preparation_offline_clone_failed",
+      "approved_source": "a3-proposal/color-match-api.json",
+      "approved_version": "92e50671917ba5aa2918967425f3de7dcd4997098f78b91c379e4339411ee544",
+      "approved_node_package": "ComfyUI-KJNodes@35e5956193769d18a13136cdedb73a36a05c73e6",
+      "approved_dependencies": "a3-install-proposal.md",
+      "approved_restart_scope": "isolated loopback instances only, 8192/8193; neither started"
+    },
+    "A4": {
+      "prompt": "prompts/a4.md",
+      "input": "fixtures/a4/input",
+      "organizer_ground_truth": "fixtures/organizer-only/a4-ground-truth-candidate.json",
+      "status": "pilot_completed_20_preserved_and_3_runs_per_arm_cache_asymmetry",
+      "candidate_workflow_pairs": 6,
+      "candidate_file_count": 20,
+      "asset": "fixtures/a4/neutral-input.png",
+      "cli_conversion_evidence": "evidence/redacted/a4-input-validation.json"
+    }
+  },
+  "formal_prerequisites": [
+    "Task 005-R2 acceptance and exact candidate SHA",
+    "environment lock and symmetric budget freeze",
+    "A/B single-image connectivity checks",
+    "equivalent setup and measured preparation costs",
+    "A4 real workflow exports and isolated organizer ground truth"
+  ],
+  "planned_workload": {
+    "unit": "per arm per task run; planned counts, not measurements or spending authorization",
+    "preparation_connectivity_images": 1,
+    "A1_20_images": 20,
+    "A1_100_images": 100,
+    "A1_50_optional_prerun_images": 50,
+    "A2_training_images": 12,
+    "A2_validation_images": 4,
+    "A3_new_workflow_runs": 1,
+    "A3_existing_workflow_regression_checks": 3,
+    "A4_discovery_run_images": 1,
+    "A4_additional_workflow_checks": 2,
+    "formal_A1_A2_paired_repeats": 3
+  }
+}

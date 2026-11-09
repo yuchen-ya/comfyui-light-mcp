@@ -1,0 +1,39 @@
+{
+  "collected_at": "2026-11-09T07:06:32.437Z",
+  "transport": "stdio",
+  "scope": "Runtime initialize and tools/list only; no tools/call and no GPU execution.",
+  "server": {
+    "name": "comfy-mcp",
+    "version": "0.10.0"
+  },
+  "official_source_reference": "5e4904fefbd264af04069581da3d3ea879fcab49",
+  "tools_list": {
+    "file": "official-tools-list.json",
+    "count": 41,
+    "bytes": 63338,
+    "sha256": "317b963e357fd8f5a76789e2ea855a9d9829ab2f22824a9c480deaaaacfc6bb6",
+    "original_compact_bytes": 63329,
+    "original_compact_sha256": "d7d6a910e1196d2fe84aea0f09e0c110416e276e037ae66d49f27fdde56ade80"
+  },
+  "instructions": {
+    "file": "official-instructions.txt",
+    "bytes": 18124,
+    "sha256": "1cadc3ed249b9fadb56457edbfdbbe5213e2093336890cf17fc7877712293cc4",
+    "original_bytes": 18115,
+    "original_sha256": "b4384cd86396272090c88c884a590a86663aca839570b4ffa040e97d2f67b122"
+  },
+  "redaction": "Public derivative: loopback examples, CPU details and exact RAM/VRAM snapshot values redacted. Original runtime byte counts and original hashes remain unchanged and refer to private originals.",
+  "model_exposed_schema": "unavailable",
+  "tokens": {
+    "source": "unavailable",
+    "input": null,
+    "output": null
+  },
+  "capability_source": "shell_assistance",
+  "mcp_requests": {
+    "initialize": 1,
+    "tools_list": 1,
+    "tools_call": 0
+  },
+  "single_image_connectivity": "not_run"
+}

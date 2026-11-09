@@ -1,0 +1,83 @@
+{
+  "version": "daily-v2-fast",
+  "status": "completed_user_reduced_scope",
+  "order_seed": 388226659,
+  "run_order": [
+    "a2-b-r1",
+    "a2-a-r1",
+    "a1-a-r1",
+    "a1-b-r1",
+    "a2-a-r2",
+    "a2-b-r2"
+  ],
+  "runs": [
+    {
+      "run_id": "a2-b-r1",
+      "case_id": "A2",
+      "arm": "B",
+      "repeat": 1,
+      "max_task_images": 16,
+      "warmup_images": 1,
+      "warmup_seed": 890001
+    },
+    {
+      "run_id": "a2-a-r1",
+      "case_id": "A2",
+      "arm": "A",
+      "repeat": 1,
+      "max_task_images": 16,
+      "warmup_images": 1,
+      "warmup_seed": 890001
+    },
+    {
+      "run_id": "a1-a-r1",
+      "case_id": "A1",
+      "arm": "A",
+      "repeat": 1,
+      "max_task_images": 20,
+      "warmup_images": 1,
+      "warmup_seed": 890003
+    },
+    {
+      "run_id": "a1-b-r1",
+      "case_id": "A1",
+      "arm": "B",
+      "repeat": 1,
+      "max_task_images": 20,
+      "warmup_images": 1,
+      "warmup_seed": 890003
+    },
+    {
+      "run_id": "a2-a-r2",
+      "case_id": "A2",
+      "arm": "A",
+      "repeat": 2,
+      "max_task_images": 16,
+      "warmup_images": 1,
+      "warmup_seed": 890002
+    },
+    {
+      "run_id": "a2-b-r2",
+      "case_id": "A2",
+      "arm": "B",
+      "repeat": 2,
+      "max_task_images": 16,
+      "warmup_images": 1,
+      "warmup_seed": 890002
+    }
+  ],
+  "budgets": {
+    "max_images": 114,
+    "task_images": 104,
+    "warmup_images": 6,
+    "planned_images": 110,
+    "remaining_allowance": 4,
+    "max_seconds_per_task": 3600
+  },
+  "fixed_workflow": "fixtures/qwen-fast.json",
+  "notes": [
+    "A2 pairs share seeds; repeats use distinct seeds.",
+    "One warmup per run; no generation has occurred.",
+    "No scale test or third paired repeat."
+  ]
+}

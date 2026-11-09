@@ -1,0 +1,37 @@
+{
+  "collected_at": "2026-11-09T07:00:18.012Z",
+  "transport": "stdio",
+  "scope": "Runtime initialize and tools/list only; no tools/call and no GPU execution.",
+  "server": {
+    "name": "comfyui-light-mcp",
+    "version": "0.3.0"
+  },
+  "dependency_lock": {
+    "file": "package-lock.json",
+    "sha256": "4e95e0e2066cf85aa85f29e50d8aebc306603d33e27aab4dedad9f650e38f37b"
+  },
+  "tools_list": {
+    "file": "light-tools-list.json",
+    "count": 4,
+    "bytes": 4189,
+    "sha256": "f8e480d1943c0ab937303a148add70a1feca20cbaa5e113ddc98e61e0ec823f2"
+  },
+  "instructions": {
+    "file": "light-instructions.txt",
+    "bytes": 2989,
+    "sha256": "e7a20290aa026ed258318b63ed32c7f1b4b94da0b6f9a990de26bbbc184f4342"
+  },
+  "model_exposed_schema": "unavailable",
+  "tokens": {
+    "source": "unavailable",
+    "input": null,
+    "output": null
+  },
+  "capability_source": "shell_assistance",
+  "mcp_requests": {
+    "initialize": 1,
+    "tools_list": 1,
+    "tools_call": 0
+  },
+  "single_image_connectivity": "not_run"
+}

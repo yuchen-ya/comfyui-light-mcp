@@ -1,0 +1,17 @@
+comfy-mcp
+Copyright (c) Comfy Org
+
+This product includes software developed at Comfy Org
+(https://www.comfy.org/).
+
+Dual-licensed under AGPL-3.0-or-later OR a commercial license from
+Comfy Org. See LICENSE for the full terms, or contact
+licensing@comfy.org for the commercial option.
+
+Third-party components
+----------------------
+
+This server invokes the comfy-cli (`comfy`) binary as a separate
+process; it does not import, link, or embed comfy-cli code. comfy-cli
+is distributed separately under the GNU General Public License v3.0
+(https://github.com/Comfy-Org/comfy-cli).

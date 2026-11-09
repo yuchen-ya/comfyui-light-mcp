@@ -1,0 +1,85 @@
+{
+  "kind": "public_derivative",
+  "description": "Redacted, transformed copies of task-local MCP calls and observer/backend audit traces, not original bytes. Original logs remain private. No missing events have been synthesized.",
+  "redactions": [
+    "Local paths replaced with run/project aliases or [LOCAL_PATH]; private/loopback IP addresses replaced with [LOCAL_ADDRESS].",
+    "Environment maps, credential/account/quota values and CPU/precise RAM/VRAM snapshots are redacted.",
+    "Nested JSON in text is parsed and recursively redacted, then serialized back to a JSON string.",
+    "Backend base64 JSON request/response bodies are decoded to readable *_json fields.",
+    "Record order and non-sensitive measured values are retained; raw hashes and published hashes refer to different byte sequences."
+  ],
+  "files": [
+    {
+      "source_alias": "a1-a/raw-mcp-calls.json",
+      "trace": "a1-a/raw-mcp-calls.json",
+      "source_sha256": "e21d29b257773b7c4b3dbb6a03ea6a8fb3cf07025326f0c95521a5ef8fcb15fe",
+      "published_sha256": "b8a5e37620c06cfae7cb1fccb63e0473ceb2c951762ffd867077f85810602404",
+      "source_records": 35,
+      "published_records": 35
+    },
+    {
+      "source_alias": "a1-b/raw-mcp-calls.json",
+      "trace": "a1-b/raw-mcp-calls.json",
+      "source_sha256": "f23cacb15ae331f588fc24497d4414bdf79f86bd20aab5928168019bd9b54606",
+      "published_sha256": "80d52d486e61f367d3e14ec7b3399a22ce5c9de73524a5da24088dd06e8da4ee",
+      "source_records": 71,
+      "published_records": 71
+    },
+    {
+      "source_alias": "a2-a/raw-mcp-calls.json",
+      "trace": "a2-a/raw-mcp-calls.json",
+      "source_sha256": "899efd091d9ed0539bf0f5f51a902301e4baf614088f93e5aa7bf9e8d681756a",
+      "published_sha256": "e063fa86fa8a06905a6463473502ffd0e47c55471e54cd3e5fb6a53f73fcf514",
+      "source_records": null,
+      "published_records": null
+    },
+    {
+      "source_alias": "a2-b/raw-mcp-calls.json",
+      "trace": "a2-b/raw-mcp-calls.json",
+      "source_sha256": "04e1d92f715a7625be7e033d088e9ee9414ee4273df2059062505a34fd5dc1fd",
+      "published_sha256": "46b59d1a29f9c4877facf24f1bd657174883395615115f77c500a355d91d1edf",
+      "source_records": null,
+      "published_records": null
+    },
+    {
+      "source_alias": "a4-a/raw-mcp-calls.json",
+      "trace": "a4-a/raw-mcp-calls.json",
+      "source_sha256": "21ed2b8a6229c77dfa0af51b7b5c92238f607c1c451b6d6c449bfaaaa14ce6a2",
+      "published_sha256": "07d836cdfa210d5d86b2ec509563e1fcce0cf60d0726cb7bad40e7aa90fa966f",
+      "source_records": 14,
+      "published_records": 14
+    },
+    {
+      "source_alias": "a4-b/raw-mcp-calls.json",
+      "trace": "a4-b/raw-mcp-calls.json",
+      "source_sha256": "d02a1eda63466e3c2be18144a761d0d9401cc7fa223afa0a4e35ac237339c1dd",
+      "published_sha256": "ea23cea983ab36f4a2e960c5b1e1cae56a9631cf870dd721c34a410180774488",
+      "source_records": 20,
+      "published_records": 20
+    },
+    {
+      "source_alias": "a4-a/discovery/raw-mcp-calls.json",
+      "trace": "a4-a/discovery-mcp-calls.json",
+      "source_sha256": "f19bd6748d329aed78c506bb5f3c008026000e100fa043ee2de5c342d824d38d",
+      "published_sha256": "d31dcf755efbf8cc2c3ebb0fd8285754b0ad146149f1772c5d42d2a5bb0e683c",
+      "source_records": 16,
+      "published_records": 16
+    },
+    {
+      "source_alias": "a4-b/discovery/raw-mcp-calls.json",
+      "trace": "a4-b/discovery-mcp-calls.json",
+      "source_sha256": "5e99fdacd122baa7863e02866ec711ad6ebb03a6d6ae007b6d57a6287a0445ff",
+      "published_sha256": "a43ce14fc5d8c213b022a3c8305fa25aad763e50d57806ed3074cc7fffd05f56",
+      "source_records": 18,
+      "published_records": 18
+    },
+    {
+      "source_alias": "observer/observer.jsonl",
+      "trace": "observer/observer.jsonl",
+      "source_sha256": "13ca837403f30f6fffd3492335ba9e2cb2b1aa073a3ffb20306b0aaa1fb0c477",
+      "published_sha256": "1155608dd900f47bad04f980f9ef7f88313af9e1fb7ba4bf790a422ffaaa79ed",
+      "source_records": 297,
+      "published_records": 297
+    }
+  ]
+}

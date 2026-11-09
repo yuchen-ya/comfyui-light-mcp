@@ -1,0 +1,63 @@
+{
+  "status": "passed",
+  "base_sha": "5cc4b870094c89090db54bd8d12649dcaf89f2ba",
+  "module_sha256": "a91d4e77d59e791e49a4584c9ee1d8f014d1d69f8c91be842fbbf5a7b813b7e5",
+  "patch_sha256": "54672501d5bfcb54a47cd58c7bae3458740426668631d668e7664133b2a9c0a9",
+  "startup": {
+    "host": "loopback",
+    "port": 8194,
+    "python": "COMFYUI_STABLE_PYTHON",
+    "custom_nodes_disabled": true,
+    "partner_nodes_disabled": true,
+    "offline_flag": true,
+    "manager_enabled": false,
+    "state_and_caches": "isolated benchmark directory",
+    "model_directory": "empty isolated directory",
+    "listener_owned_by_started_process": true
+  },
+  "valid_post_attempts": 1,
+  "proxy_used": false,
+  "request_route": "/api/prompt",
+  "client_id_in_request": false,
+  "error": null,
+  "audit_events": {
+    "post_requests": 1,
+    "post_responses": 1,
+    "request_body_matches": true,
+    "response_body_matches": true,
+    "response_status": 200,
+    "execution_events": {
+      "execution_start": 1,
+      "execution_success": 1,
+      "execution_error": 0,
+      "execution_interrupted": 0,
+      "execution_cached": 1
+    },
+    "event_sid_null_for_clientless_request": true,
+    "history_graph_matches": true,
+    "failure_marker": false
+  },
+  "image": {
+    "count": 1,
+    "format": "PNG",
+    "size": [
+      64,
+      64
+    ],
+    "mode": "RGB",
+    "pixel_rgb": [
+      36,
+      104,
+      172
+    ],
+    "decoded": true,
+    "matches_requested_color": true
+  },
+  "missing": {
+    "formal_benchmark_result": null,
+    "independent_network_capture": null,
+    "actual_non_prefixed_route_check": "mock only"
+  },
+  "own_8194_process_stopped": true,
+  "port_8190_remained_listening": true
+}

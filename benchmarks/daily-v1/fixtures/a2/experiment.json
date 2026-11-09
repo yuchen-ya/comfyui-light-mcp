@@ -1,0 +1,54 @@
+{
+  "status": "candidate_not_frozen",
+  "workflow": "${WORKFLOW}",
+  "fixed_prompt": "A red ceramic cup on a white table, soft daylight",
+  "fixed_parameters": "Use the selected verified workflow unchanged except steps, cfg, and seed.",
+  "parameter_candidates": [
+    {
+      "config_id": "cfg-1",
+      "steps": 12,
+      "cfg": 2.0,
+      "baseline": false
+    },
+    {
+      "config_id": "cfg-2",
+      "steps": 12,
+      "cfg": 2.5,
+      "baseline": false
+    },
+    {
+      "config_id": "cfg-3",
+      "steps": 16,
+      "cfg": 2.0,
+      "baseline": false
+    },
+    {
+      "config_id": "cfg-4",
+      "steps": 16,
+      "cfg": 2.5,
+      "baseline": false
+    },
+    {
+      "config_id": "cfg-5",
+      "steps": 20,
+      "cfg": 2.0,
+      "baseline": false
+    },
+    {
+      "config_id": "cfg-6",
+      "steps": 20,
+      "cfg": 2.5,
+      "baseline": true
+    }
+  ],
+  "training_seeds": [
+    210001,
+    210002
+  ],
+  "validation_seeds": [
+    220001,
+    220002
+  ],
+  "execution_plan": "All six configurations x two training seeds; then baseline and selected candidate each x two validation seeds, for four validation executions and 16 images total.",
+  "freeze_requirement": "Confirm parameter support, legal values and baseline against the verified selected workflow before a pilot; otherwise replace symmetrically and freeze before formal runs."
+}

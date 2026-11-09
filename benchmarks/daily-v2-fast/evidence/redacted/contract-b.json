@@ -1,0 +1,16 @@
+{
+  "arm": "B",
+  "server": {
+    "name": "comfy-mcp",
+    "version": "0.10.0"
+  },
+  "tools_count": 41,
+  "tools_list_sha256": "d7d6a910e1196d2fe84aea0f09e0c110416e276e037ae66d49f27fdde56ade80",
+  "tools_list_bytes": 63329,
+  "instructions_sha256": "c57a32989f7839150d5a1fdf9466dd05809980962c986bdd6ae837a2684ce49b",
+  "instructions_bytes": 18355,
+  "initialize": 1,
+  "tools_list": 1,
+  "tools_call": 0,
+  "status": "verified_live"
+}

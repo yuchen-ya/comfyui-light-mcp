@@ -1,0 +1,91 @@
+{
+  "status": "frozen_before_first_scored_task",
+  "arms": {
+    "A": {
+      "git_sha": "80fde2807e248d2ea4cc953d8e6e2d69fc704b79",
+      "package_version": "0.1.0",
+      "runtime_server": {
+        "name": "comfyui-light-mcp",
+        "version": "0.3.0"
+      },
+      "dependency_lock_file": "package-lock.json",
+      "dependency_lock_sha256": "4e95e0e2066cf85aa85f29e50d8aebc306603d33e27aab4dedad9f650e38f37b",
+      "tools_list_sha256": "f8e480d1943c0ab937303a148add70a1feca20cbaa5e113ddc98e61e0ec823f2",
+      "instructions_sha256": "e7a20290aa026ed258318b63ed32c7f1b4b94da0b6f9a990de26bbbc184f4342"
+    },
+    "B": {
+      "git_sha": "5e4904fefbd264af04069581da3d3ea879fcab49",
+      "runtime_server": {
+        "name": "comfy-mcp",
+        "version": "0.10.0"
+      },
+      "comfy_cli_version": "1.14.0",
+      "dependency_lock_file": "official-requirements.lock.txt",
+      "dependency_lock_sha256": "2cef5943fef8cb970afcd00bce808e96ee3e2a375f883caed8ba8d812245b9b0",
+      "tools_list_original_sha256": "d7d6a910e1196d2fe84aea0f09e0c110416e276e037ae66d49f27fdde56ade80",
+      "instructions_original_sha256": "c57a32989f7839150d5a1fdf9466dd05809980962c986bdd6ae837a2684ce49b",
+      "comfy_bin": "ISOLATED_OFFICIAL_CLI",
+      "instructions_change": "Same frozen source; exact documented COMFYUI_URL target suffix added at initialization."
+    }
+  },
+  "agent": {
+    "model": "gpt-6.1-terra",
+    "reasoning_effort": "high",
+    "host_cli_version": "0.166.0-alpha.5.1",
+    "desktop_app_version": null,
+    "temperature": null,
+    "tool_access": "Both arms use the same generic persistent stdio SDK bridge. Initialize and tools/list are prefetched once and counted; agents read instructions and select schemas through identical HTTP endpoints. No workflow, batching, mapping, retry or result processing logic in bridge.",
+    "actual_model_tool_definition_inventory": "unavailable",
+    "tool_lazy_loading_configuration": "unavailable",
+    "compaction": "See host usage records; no conversation memory shared across arms.",
+    "usage": "host_reported_token_count; child request sums independently reconcile to cumulative totals",
+    "a4": "not repeated"
+  },
+  "hardware": {
+    "os": "Windows 11 Pro 10.0.26100",
+    "gpu": "NVIDIA GeForce RTX 5080",
+    "driver": "616.92",
+    "node": "22.22.0"
+  },
+  "comfyui": {
+    "git_sha": "5cc4b870094c89090db54bd8d12649dcaf89f2ba",
+    "version": "0.41.0",
+    "python": "3.10.19",
+    "torch": "2.11.0+cu130",
+    "cuda": "13.0",
+    "audit_module_sha256": "a91d4e77d59e791e49a4584c9ee1d8f014d1d69f8c91be842fbbf5a7b813b7e5",
+    "audit_patch_sha256": "54672501d5bfcb54a47cd58c7bae3458740426668631d668e7664133b2a9c0a9",
+    "models_evidence": "evidence/redacted/models.json",
+    "models_fingerprints_reverified": true,
+    "custom_nodes_enabled": false,
+    "partner_nodes_enabled": false,
+    "manager_enabled": false,
+    "python_shared_read_only_intent": "EXISTING_COMFY_ENV",
+    "model_shared_read_only_intent": "READ_ONLY_EXISTING_MODELS",
+    "os_level_read_only_enforced": false,
+    "node_names_sha256": "6b0401554405777c2e0649d6af12649f52c220b53293b1d402a4eb3021b7a1c5",
+    "node_count": 679,
+    "observed_version": "0.41.0"
+  },
+  "workflow_sha256": "7def64228a4a403f12b650718b5334b769497b15ce57b53b3180f7f9df115927",
+  "fixture_sha256": {
+    "a1-items-20.json": "cdacebd2968e8455f56844f7de2e0ed0688b32e451edd9bd6793471cb6aea537",
+    "a2-repeat-1.json": "1f2b6cec446ff9ffc6bef1f795579c5940d964ef687db5b2984824e0d6a2cd7f",
+    "a2-repeat-2.json": "369709b7c10f96bd778f64902d2695286bada45e6bc3d726f695f0abd1f52f78",
+    "quality-rubric.json": "bd8e91df12dd65202ae6fda4d96f38d10ed5a1447a6bbb8183252abcd9191f69",
+    "qwen-fast.json": "7def64228a4a403f12b650718b5334b769497b15ce57b53b3180f7f9df115927",
+    "qwen-fast.manifest.json": "476e99310b49cace9e8b5335ac4a7cef8b8d3d7ce45050db55e4641c66105a9c"
+  },
+  "run_time_tools_list_and_instructions_verified": true,
+  "task_budget_and_order": "suite.json",
+  "notes": [
+    "Reconfigured fast workload; do not pool with daily-v1 pilot.",
+    "Reduced repeats: A1 one pair, A2 two pairs. No three-repeat or significance claim.",
+    "Independent raw ComfyUI state/output and MCP data/profile per task; one full backend audit per instance.",
+    "First warmup occurs during preparation; no scored task submitted before this freeze."
+  ],
+  "frozen_at": "2026-11-09T08:31:06.617Z",
+  "bridge_sha256": "43c4936e9d18fd3a1103c9a2235ce867d7833b56df5b6a575de48049a4e5f315",
+  "validator_sha256": "c70ef13fc5510577e8cd68a083b26bd5e7c8cc41d285db9140929ca3c0c68f5c",
+  "official_dependencies_verified": true
+}

@@ -1,0 +1,89 @@
+{
+  "run_id": "pilot-a1-b",
+  "case_id": "A1",
+  "arm": "B",
+  "stage": "pilot",
+  "repeat": 1,
+  "measured": true,
+  "formal_score": false,
+  "requested_items": 20,
+  "validation": {
+    "status": "not_passed",
+    "duplicate_executions": null,
+    "followup_posts": 0,
+    "errors": [
+      "Duplicate executions unavailable: complete observer evidence is required"
+    ]
+  },
+  "captured_post_count": 20,
+  "execution_start_count": 0,
+  "capture_first_post_at": "2026-11-09T07:25:58.328Z",
+  "capture_last_post_at": "2026-11-09T07:26:50.627Z",
+  "mcp_metrics": {
+    "start_time_utc": "2026-11-09T07:25:14.079Z",
+    "end_time_utc": "2026-11-09T07:27:58.427Z",
+    "timing_note": "Start is first MCP initialize; initial input reading and SDK resolution preceded it.",
+    "first_access": {
+      "source": "MCP",
+      "initialize_start": "2026-11-09T07:25:14.079Z",
+      "initialize_end": "2026-11-09T07:25:16.076Z",
+      "discovery_scripts": [
+        "discover.cjs",
+        "check.cjs",
+        "first.cjs",
+        "run.cjs"
+      ],
+      "script_work": "SDK discovery, connection checks, per-item workflow copies, submission, polling, output retrieval, index and metrics; all in task directory."
+    },
+    "tool_counts": {
+      "initialize": 4,
+      "tools/list": 4,
+      "server_info": 3,
+      "run_workflow": 20,
+      "job": 20,
+      "fetch_outputs": 20
+    },
+    "total_mcp_requests": 71,
+    "generation_requests": 20,
+    "retries": {
+      "generation": 0,
+      "other": 0,
+      "job_wait_polling": "status polling, not generation retries"
+    },
+    "errors": [],
+    "capability_sources": {
+      "initialize": "MCP SDK stdio",
+      "tools_list": "MCP SDK stdio",
+      "server_info": "MCP",
+      "generation": "MCP run_workflow",
+      "status": "MCP job",
+      "outputs": "MCP fetch_outputs",
+      "workflow_copy_and_index": "local Node filesystem",
+      "shell_fallback": false,
+      "direct_api_bypass": false
+    },
+    "usage": "unavailable",
+    "shell_file_calls": {
+      "count": "not precisely instrumented",
+      "classification": "self_reported",
+      "note": "PowerShell/Node used for input reads, SDK scripts, workflow copies, logs, index and verification; no generation, status or output retrieval via shell fallback."
+    },
+    "results": {
+      "success": 20,
+      "failure": 0,
+      "output_bytes": 4710468,
+      "verification_mismatches": []
+    },
+    "budget": {
+      "max_generation": 20,
+      "max_seconds": 3600,
+      "max_output_bytes": 10737418240
+    }
+  },
+  "input_sha256": "cdacebd2968e8455f56844f7de2e0ed0688b32e451edd9bd6793471cb6aea537",
+  "evidence_alias": "LOCAL_PILOT_A1_B_EVIDENCE",
+  "limitations": [
+    "Client identity grouping requires independent raw-log audit; follow-up POST count is bounded by this completed task session.",
+    "Full model usage and generic tool argument/return byte accounting are unavailable."
+  ]
+}

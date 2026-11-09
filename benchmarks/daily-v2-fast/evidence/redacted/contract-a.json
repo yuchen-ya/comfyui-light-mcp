@@ -1,0 +1,16 @@
+{
+  "arm": "A",
+  "server": {
+    "name": "comfyui-light-mcp",
+    "version": "0.3.0"
+  },
+  "tools_count": 4,
+  "tools_list_sha256": "f8e480d1943c0ab937303a148add70a1feca20cbaa5e113ddc98e61e0ec823f2",
+  "tools_list_bytes": 4189,
+  "instructions_sha256": "e7a20290aa026ed258318b63ed32c7f1b4b94da0b6f9a990de26bbbc184f4342",
+  "instructions_bytes": 2989,
+  "initialize": 1,
+  "tools_list": 1,
+  "tools_call": 0,
+  "status": "verified_live"
+}

@@ -1,0 +1,55 @@
+{
+  "case": "A4",
+  "arm": "B",
+  "classification": "pilot_not_formal",
+  "audited_at": "2026-11-09T07:52:10.662098+00:00",
+  "machine_checks": "passed_with_limits",
+  "sources": {
+    "organized_index_sha256": "a036d955aaa6cbd68e0951985005e7a6a2d687e4806214813cb39c06d9c021a9",
+    "organizer_ground_truth_sha256": "f47ba892137d898b2912826410121b7432378e53431dafa11e5f4245c11a4784",
+    "discovery_index_sha256": "104e313ad8836ffdbfc917bf7eb757bb7d84a291c71943588f8511626e8fa955",
+    "input_conversion_evidence_sha256": "8b47e0a506c9c2ae52cf3792e291f3ada5e03dffc763941584da0f29b2af4bb2",
+    "organizer_runtime_evidence_sha256": "0b5ad7081869b014ce2cd80109697a697f95bea6cbe4640d6a2912801558316c"
+  },
+  "checks": {
+    "original_files_hash_preserved": 20,
+    "index_mappings": 20,
+    "api_ui_pairs": 6,
+    "api_ui_nodes_and_links_independently_matched": true,
+    "api_ui_widgets": "linked by matching file hashes to prior six-pair CLI conversion evidence",
+    "byte_duplicates": 2,
+    "json_equivalent": 2,
+    "parameter_variants": 2,
+    "missing_node": 1,
+    "invalid_json": 1,
+    "duplicates_and_errors_archive_or_quarantine": true,
+    "new_session_result_handles_with_success_history": 3,
+    "decoded_png": 3,
+    "dimensions": [
+      "512x512",
+      "64x64",
+      "64x64"
+    ],
+    "png_embedded_graph_matches_history": 3,
+    "input_asset_digest_matches_png_execution_metadata": true,
+    "flip_rgb_mismatched_pixels": 0,
+    "redmask_rgb_mismatched_pixels": 0
+  },
+  "execution_cache": {
+    "text_to_image": "sampler_and_7_other_nodes_cached",
+    "flip": "no_nodes_cached",
+    "redmask": "load_image_cached",
+    "effect": "cached execution must not be treated as an intrinsic maintenance speed advantage"
+  },
+  "full_scope_duplicate_executions": null,
+  "limits": [
+    "No all-path independent submission observer coverage.",
+    "UI conversion evidence is a CLI conversion check, not a frontend round trip.",
+    "Candidate input freeze and real measurements are pilot evidence, not formal comparison."
+  ],
+  "actual_errors": [],
+  "published_sources": {
+    "organizer_ground_truth_sha256": "061045a0216b22d637a2b2b633171eb6fd1836900a7ccdc0b4ab0cda23d2d55f"
+  },
+  "publication_note": "sources retains the audit-time source hashes. Private historical-workflow source fingerprints were removed from the public organizer truth; its derivative hash is in published_sources."
+}

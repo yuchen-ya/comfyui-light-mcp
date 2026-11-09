@@ -1,0 +1,28 @@
+{
+  "measured_at": "2026-11-09T09:19:14.852Z",
+  "stage": "daily-v2-fast",
+  "task_posts": 104,
+  "warmup_posts": 6,
+  "total_posts": 110,
+  "approved_post_cap": 114,
+  "unused_post_allowance": 4,
+  "indexed_task_output_bytes": 18991600,
+  "all_private_run_artifacts_bytes": 1486426406,
+  "all_private_run_artifact_files": 735,
+  "disk_cap_bytes": 10737418240,
+  "machine_validated_outputs": 104,
+  "duplicate_executions": 0,
+  "a1_followup_posts": 0,
+  "bridge_and_validator_frozen_hashes_match": true,
+  "input_fingerprints_match": true,
+  "build": "passed",
+  "lint": "passed",
+  "independent_live_run_audits": {
+    "passed": 6,
+    "failed": 0
+  },
+  "product_source_changes": false,
+  "third_party_installation_in_this_phase": false,
+  "quality": "independent human review pending; no usable speedup established",
+  "note": "The post cap counts all submitted image workflows, including warmups; disk accounting conservatively includes inputs, database, profile, logs, raw outputs, downloads and contact sheets."
+}

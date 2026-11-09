@@ -1,0 +1,43 @@
+{
+  "case": "A2",
+  "arm": "A",
+  "classification": "pilot_not_formal",
+  "audited_at": "2026-11-09T07:52:10.662098+00:00",
+  "machine_checks": "passed_with_observation_limits",
+  "sources": {
+    "experiment_sha256": "c4a6eba5bc5176a0743af8fc609118f97f14fe873913aaa30b4153da17fc927c",
+    "workflow_sha256": "5749f4256367a5b4866dbe90ff7452eb010221bde1de107dcdd0a06b2e3299cf",
+    "raw_index_sha256": "15c427898a9460de663c3dd5daa922bd8a88f056badd839114e89e47d0a1fb80",
+    "selection_evidence_sha256": "3d8847617535057180b9406d70a33906cd40bd17b0297beec35ea0a4238d85cc",
+    "metrics_sha256": "767533c2912746bc9d9f12f89ad0cbbb6125e4830566b831e0acf25aa8d03e72"
+  },
+  "checks": {
+    "requested_items": 16,
+    "matrix_training": 12,
+    "matrix_validation": 4,
+    "selected_config": "cfg-1",
+    "baseline_config": "cfg-6",
+    "post_graphs_matched_to_prompt_id": 16,
+    "frozen_parameters_seed_prompt_and_allowed_graph_fields": "passed",
+    "history_completed_and_duration_matched": 16,
+    "png_decoded": 16,
+    "png_embedded_graph_matches_observed_post": 16,
+    "current_template_matches_reconstructed_preparation_bytes": true,
+    "independent_pre_task_byte_snapshot": null,
+    "index_normalization": "review copy maps status and parameter field names; A raw index included fixed prompt",
+    "observer_posts_per_indexed_handle": 1,
+    "proxy_scope_duplicate_posts": 0,
+    "full_scope_duplicate_executions": null,
+    "observed_websocket_execution_start": 16,
+    "validator_result": "not_passed",
+    "validator_unavailable_reason": "complete independent execution observation unavailable"
+  },
+  "quality": "pending_human_review",
+  "limits": [
+    "Execution duration is start-to-success history time, includes cached nodes, not GPU-only.",
+    "Selection timing and causal order are not independently established by the final evidence.",
+    "Template matches reconstructed initial preparation bytes; no separately retained pre-task snapshot or continuous integrity audit.",
+    "No all-path independent submission observer coverage; no claim of zero duplicate executions."
+  ],
+  "actual_errors": []
+}

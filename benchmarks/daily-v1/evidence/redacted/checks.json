@@ -1,0 +1,24 @@
+{
+  "build": "passed",
+  "lint": "passed",
+  "product_offline_tests": {
+    "files": 24,
+    "passed": 257,
+    "failed": 0,
+    "scope": "tests/unit tests/http-mock tests/ws; not old real-e2e counts"
+  },
+  "benchmark_node_tests": {
+    "passed": 5,
+    "failed": 0
+  },
+  "benchmark_python_tests": {
+    "passed": 3,
+    "failed": 0
+  },
+  "real_comfy_benchmark_submissions": 92,
+  "git_product_diff": "none",
+  "branch": "codex/task006-daily-benchmark",
+  "privacy_scan": "No personal absolute paths, credentials, opaque message payloads, or runtime artifacts in the public benchmark directory.",
+  "commit_created": false,
+  "production_changed": false
+}

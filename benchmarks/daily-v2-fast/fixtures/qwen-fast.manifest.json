@@ -1,0 +1,86 @@
+{
+  "name": "qwen-fast",
+  "description": "Qwen-Image 2.1 文生图示例（512-2048px，euler/simple）",
+  "version": 1,
+  "workflowFile": "workflow.json",
+  "params": [
+    {
+      "name": "prompt",
+      "node": "4",
+      "input": "text",
+      "type": "string",
+      "required": true,
+      "description": "正向提示词"
+    },
+    {
+      "name": "negative_prompt",
+      "node": "5",
+      "input": "text",
+      "type": "string",
+      "default": "blurry, low quality",
+      "description": "负向提示词"
+    },
+    {
+      "name": "seed",
+      "node": "7",
+      "input": "seed",
+      "type": "integer",
+      "default": -1,
+      "special": "seed",
+      "min": -1,
+      "max": 4294967295,
+      "description": "-1 = 每次随机；实际值记录于结果 params_resolved"
+    },
+    {
+      "name": "steps",
+      "node": "7",
+      "input": "steps",
+      "type": "integer",
+      "min": 1,
+      "max": 100,
+      "default": 4,
+      "description": "采样步数"
+    },
+    {
+      "name": "cfg",
+      "node": "7",
+      "input": "cfg",
+      "type": "number",
+      "min": 1,
+      "max": 20,
+      "step": 0.5,
+      "default": 2.5,
+      "description": "CFG（对齐 0.5 步长）"
+    },
+    {
+      "name": "width",
+      "node": "6",
+      "input": "width",
+      "type": "integer",
+      "min": 256,
+      "max": 2048,
+      "step": 16,
+      "default": 512,
+      "description": "宽度（16px 对齐）"
+    },
+    {
+      "name": "height",
+      "node": "6",
+      "input": "height",
+      "type": "integer",
+      "min": 256,
+      "max": 2048,
+      "step": 16,
+      "default": 512,
+      "description": "高度（16px 对齐）"
+    },
+    {
+      "name": "sampler",
+      "node": "7",
+      "input": "sampler_name",
+      "type": "string",
+      "default": "euler",
+      "description": "采样器（combo：合法值由 ComfyUI 校验，非法值在提交时被拒并返回 node_errors）"
+    }
+  ]
+}

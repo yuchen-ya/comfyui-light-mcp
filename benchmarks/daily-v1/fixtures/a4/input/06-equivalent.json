@@ -1,0 +1,101 @@
+{
+    "1": {
+        "class_type": "SaveImage",
+        "inputs": {
+            "filename_prefix": "daily-output",
+            "images": [
+                "8",
+                0
+            ]
+        }
+    },
+    "11": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+            "clip": [
+                "45",
+                0
+            ],
+            "text": "A red ceramic cup on a white table, soft daylight"
+        }
+    },
+    "12": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {
+            "clip": [
+                "45",
+                0
+            ],
+            "text": "blurry, low quality"
+        }
+    },
+    "15": {
+        "class_type": "VAELoader",
+        "inputs": {
+            "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+        }
+    },
+    "19": {
+        "class_type": "KSampler",
+        "inputs": {
+            "cfg": 2.5,
+            "denoise": 1.0,
+            "latent_image": [
+                "28",
+                0
+            ],
+            "model": [
+                "44",
+                0
+            ],
+            "negative": [
+                "12",
+                0
+            ],
+            "positive": [
+                "11",
+                0
+            ],
+            "sampler_name": "euler",
+            "scheduler": "simple",
+            "seed": 42,
+            "steps": 20
+        }
+    },
+    "28": {
+        "class_type": "EmptySD3LatentImage",
+        "inputs": {
+            "batch_size": 1,
+            "height": 512,
+            "width": 512
+        }
+    },
+    "44": {
+        "class_type": "UNETLoader",
+        "inputs": {
+            "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+            "weight_dtype": "default"
+        }
+    },
+    "45": {
+        "class_type": "CLIPLoader",
+        "inputs": {
+            "clip_name": "qwen3vl_8b_w4a8.safetensors",
+            "device": "default",
+            "type": "qwen_image"
+        }
+    },
+    "8": {
+        "class_type": "VAEDecode",
+        "inputs": {
+            "samples": [
+                "19",
+                0
+            ],
+            "vae": [
+                "15",
+                0
+            ]
+        }
+    }
+}

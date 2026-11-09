@@ -1,0 +1,87 @@
+{
+  "status": "not_authorized_not_run",
+  "randomization_seed": 388226659,
+  "order_rule": "Predeclared seeded first-arm selection with alternating first arm across paired repeats; no outcome-based selection.",
+  "order": [
+    {
+      "case_id": "A2",
+      "arm": "B",
+      "repeat": 1
+    },
+    {
+      "case_id": "A2",
+      "arm": "A",
+      "repeat": 1
+    },
+    {
+      "case_id": "A1",
+      "arm": "A",
+      "repeat": 1
+    },
+    {
+      "case_id": "A1",
+      "arm": "B",
+      "repeat": 1
+    },
+    {
+      "case_id": "A1",
+      "arm": "B",
+      "repeat": 2
+    },
+    {
+      "case_id": "A1",
+      "arm": "A",
+      "repeat": 2
+    },
+    {
+      "case_id": "A2",
+      "arm": "A",
+      "repeat": 2
+    },
+    {
+      "case_id": "A2",
+      "arm": "B",
+      "repeat": 2
+    },
+    {
+      "case_id": "A1",
+      "arm": "A",
+      "repeat": 3
+    },
+    {
+      "case_id": "A1",
+      "arm": "B",
+      "repeat": 3
+    },
+    {
+      "case_id": "A2",
+      "arm": "B",
+      "repeat": 3
+    },
+    {
+      "case_id": "A2",
+      "arm": "A",
+      "repeat": 3
+    }
+  ],
+  "requested_budget": {
+    "task_images": 216,
+    "warmup_images": 12,
+    "total_images": 228,
+    "max_output_bytes": 10737418240,
+    "timeout_seconds_per_task": 3600
+  },
+  "conditions": [
+    "Approve the separate formal budget before execution.",
+    "Re-freeze runtime hashes, prompts, model/client and inputs; retain independent before snapshots.",
+    "Use the validated backend audit v2 for both arms and separate ComfyUI state/output for every task.",
+    "Restart/reset and use one identical 4-step warmup before each task; predeclare new warmup seeds.",
+    "A2 remains pending independent blinded quality review if only an automated proxy is available."
+  ],
+  "scale_100": {
+    "status": "not_run_separate_budget_and_20_item_acceptance_required",
+    "images": 200,
+    "warmups": 2
+  },
+  "randomization_source": "crypto.randomBytes(4), recorded before any formal execution"
+}

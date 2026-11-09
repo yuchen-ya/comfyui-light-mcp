@@ -1,0 +1,102 @@
+{
+  "pairs": [
+    {
+      "ui": "01-text-image-ui.json",
+      "ui_sha256": "77dfefa716d1ce294521355e6f5373fab297403939bee480f864aae643816881",
+      "api": "01-text-image-api.json",
+      "api_sha256": "18f140f571e745904bb48f68c4c2289d3ca1f4fa078e7f52b3ca44f6ee0b6c6d",
+      "cli_conversion_graph_match": true,
+      "comparison": "class_type and all inputs per node; _meta ignored"
+    },
+    {
+      "ui": "02-image-edit-ui.json",
+      "ui_sha256": "a6f252f058a1f1df2dbfce9007e00a5e4c038164c1f5ffb5240e0097562892d7",
+      "api": "02-image-edit-api.json",
+      "api_sha256": "13346b7e322b0002aa8c3fb1c50e97f46c31d46259e3e08c1a1f36f1b4f859c0",
+      "cli_conversion_graph_match": true,
+      "comparison": "class_type and all inputs per node; _meta ignored"
+    },
+    {
+      "ui": "03-upscale-ui.json",
+      "ui_sha256": "14019a513a952854d5c42217bc8807d92b52bc244fbc9fe102d729dabdd83cca",
+      "api": "03-upscale-api.json",
+      "api_sha256": "2e13cc4abe84ed631b83f3d6605ed469fa84cc148f3483f0c1921da56169d382",
+      "cli_conversion_graph_match": true,
+      "comparison": "class_type and all inputs per node; _meta ignored"
+    },
+    {
+      "ui": "04-flip-ui.json",
+      "ui_sha256": "f0648c565d8919fb82b92516be7fda29fa01b873f96371d9661ede2356f5d25e",
+      "api": "04-flip-api.json",
+      "api_sha256": "3113ef5d9712ac49d84fbd658f10e80fb0fea13954725d90c43f09b31537afd5",
+      "cli_conversion_graph_match": true,
+      "comparison": "class_type and all inputs per node; _meta ignored"
+    },
+    {
+      "ui": "05-invert-ui.json",
+      "ui_sha256": "152c0ea1e8591d2cdf7b359dc59dc8f1fdf3199af900aa32779282feb9f337fe",
+      "api": "05-invert-api.json",
+      "api_sha256": "5ee92a25f004ee2f337bbbee85ce3b51d7fd02403c034307af1ea80fbafd1acb",
+      "cli_conversion_graph_match": true,
+      "comparison": "class_type and all inputs per node; _meta ignored"
+    },
+    {
+      "ui": "06-red-mask-ui.json",
+      "ui_sha256": "fa4261fbc5022a5b607ac03da3f27ed875dc3e3e0fbe2135f60e165f260c4952",
+      "api": "06-red-mask-api.json",
+      "api_sha256": "42452dcae308f6689d08513155c920e3b758ba364f278f8a3c3a1d322e80d6d4",
+      "cli_conversion_graph_match": true,
+      "comparison": "class_type and all inputs per node; _meta ignored"
+    }
+  ],
+  "model_enum_checks": [
+    {
+      "graph": "01-text-image-api.json",
+      "node_type": "VAELoader",
+      "field": "vae_name",
+      "value_present": true
+    },
+    {
+      "graph": "01-text-image-api.json",
+      "node_type": "UNETLoader",
+      "field": "unet_name",
+      "value_present": true
+    },
+    {
+      "graph": "01-text-image-api.json",
+      "node_type": "CLIPLoader",
+      "field": "clip_name",
+      "value_present": true
+    },
+    {
+      "graph": "02-image-edit-api.json",
+      "node_type": "VAELoader",
+      "field": "vae_name",
+      "value_present": true
+    },
+    {
+      "graph": "02-image-edit-api.json",
+      "node_type": "UNETLoader",
+      "field": "unet_name",
+      "value_present": true
+    },
+    {
+      "graph": "02-image-edit-api.json",
+      "node_type": "CLIPLoader",
+      "field": "clip_name",
+      "value_present": true
+    }
+  ],
+  "object_info_sha256": "a7791e4d90b0fede6fe6ab9ad872d95a3a0f5dbe132cca3f92eb458701cc9b56",
+  "status": "cli_conversion_and_model_enumeration_checked_runtime_unverified",
+  "converter": "installed comfy-cli 1.14.0 comfy_cli.workflow_to_api.convert_ui_to_api, invoked directly in isolated subprocess",
+  "cli_commands": "comfy workflow convert/export are unavailable; conversion function is used internally by comfy validate",
+  "server": "isolated ComfyUI object_info logical alias",
+  "neutral_asset_sha256": "9b98c36f57f993992edc60b7e87f9825bdcc6112475811f78ca849bcdeb752fe",
+  "browser_frontend_roundtrip": "not_performed",
+  "limits": [
+    "No workflow was submitted or executed.",
+    "Model names being listed is not proof of successful model loading or output quality.",
+    "Freeze inputs and independently validate runtime before benchmarking."
+  ]
+}

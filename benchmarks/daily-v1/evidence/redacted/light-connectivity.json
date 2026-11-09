@@ -1,0 +1,52 @@
+{
+  "stage": "006A_preparation",
+  "arm": "A",
+  "case_id": "single_image_connectivity",
+  "started_at": "2026-11-09T07:08:24.131Z",
+  "finished_at": "2026-11-09T07:08:42.415Z",
+  "status": "succeeded",
+  "batch_id": "d8126cf2-1947-4977-a8ff-43946e5821b1",
+  "requested_params": {
+    "prompt": "A red ceramic cup on a white table, soft daylight",
+    "seed": 9000601,
+    "steps": 4,
+    "width": 512,
+    "height": 512
+  },
+  "mcp_tool_requests": 9,
+  "tool_request_counts": {
+    "list_workflows": 1,
+    "run_workflow": 1,
+    "get_result": 7
+  },
+  "capability_sources": [
+    "MCP",
+    "shell_assistance"
+  ],
+  "usage": {
+    "source": "unavailable",
+    "input_tokens": null,
+    "output_tokens": null
+  },
+  "raw_evidence_alias": "LOCAL_LIGHT_CONNECTIVITY_EVIDENCE",
+  "output_alias": "LIGHT_CONNECTIVITY_OUTPUT",
+  "counted_generations": 1,
+  "independent_decode": {
+    "bytes": 171313,
+    "width": 512,
+    "params_resolved": {
+      "prompt": "A red ceramic cup on a white table, soft daylight",
+      "negative_prompt": "blurry, low quality",
+      "seed": 9000601,
+      "steps": 4,
+      "cfg": 2.5,
+      "width": 512,
+      "height": 512,
+      "sampler": "euler"
+    },
+    "format": "b96b3caf-0728-11d3-9d7b-0000f81ef32e",
+    "height": 512,
+    "status": "decoded"
+  },
+  "formal_score": false
+}

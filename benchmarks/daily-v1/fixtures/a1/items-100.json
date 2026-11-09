@@ -1,0 +1,502 @@
+[
+  {
+    "item_id": "item-001",
+    "prompt": "A red cube on a plain background, variation 001",
+    "seed": 300001
+  },
+  {
+    "item_id": "item-002",
+    "prompt": "A blue sphere on a plain background, variation 002",
+    "seed": 300002
+  },
+  {
+    "item_id": "item-003",
+    "prompt": "A green cylinder on a plain background, variation 003",
+    "seed": 300003
+  },
+  {
+    "item_id": "item-004",
+    "prompt": "A yellow cone on a plain background, variation 004",
+    "seed": 300004
+  },
+  {
+    "item_id": "item-005",
+    "prompt": "A orange pyramid on a plain background, variation 005",
+    "seed": 300005
+  },
+  {
+    "item_id": "item-006",
+    "prompt": "A purple torus on a plain background, variation 006",
+    "seed": 300006
+  },
+  {
+    "item_id": "item-007",
+    "prompt": "A white ceramic cup on a plain background, variation 007",
+    "seed": 300007
+  },
+  {
+    "item_id": "item-008",
+    "prompt": "A wooden chair on a plain background, variation 008",
+    "seed": 300008
+  },
+  {
+    "item_id": "item-009",
+    "prompt": "A glass bottle on a plain background, variation 009",
+    "seed": 300009
+  },
+  {
+    "item_id": "item-010",
+    "prompt": "A paper boat on a plain background, variation 010",
+    "seed": 300010
+  },
+  {
+    "item_id": "item-011",
+    "prompt": "A metal key on a plain background, variation 011",
+    "seed": 300011
+  },
+  {
+    "item_id": "item-012",
+    "prompt": "A small clock on a plain background, variation 012",
+    "seed": 300012
+  },
+  {
+    "item_id": "item-013",
+    "prompt": "A stone arch on a plain background, variation 013",
+    "seed": 300013
+  },
+  {
+    "item_id": "item-014",
+    "prompt": "A folded umbrella on a plain background, variation 014",
+    "seed": 300014
+  },
+  {
+    "item_id": "item-015",
+    "prompt": "A woven basket on a plain background, variation 015",
+    "seed": 300015
+  },
+  {
+    "item_id": "item-016",
+    "prompt": "A toy train on a plain background, variation 016",
+    "seed": 300016
+  },
+  {
+    "item_id": "item-017",
+    "prompt": "A leaf on a plain background, variation 017",
+    "seed": 300017
+  },
+  {
+    "item_id": "item-018",
+    "prompt": "A flower on a plain background, variation 018",
+    "seed": 300018
+  },
+  {
+    "item_id": "item-019",
+    "prompt": "A lantern on a plain background, variation 019",
+    "seed": 300019
+  },
+  {
+    "item_id": "item-020",
+    "prompt": "A book on a plain background, variation 020",
+    "seed": 300020
+  },
+  {
+    "item_id": "item-021",
+    "prompt": "A red cube on a plain background, variation 021",
+    "seed": 300021
+  },
+  {
+    "item_id": "item-022",
+    "prompt": "A blue sphere on a plain background, variation 022",
+    "seed": 300022
+  },
+  {
+    "item_id": "item-023",
+    "prompt": "A green cylinder on a plain background, variation 023",
+    "seed": 300023
+  },
+  {
+    "item_id": "item-024",
+    "prompt": "A yellow cone on a plain background, variation 024",
+    "seed": 300024
+  },
+  {
+    "item_id": "item-025",
+    "prompt": "A orange pyramid on a plain background, variation 025",
+    "seed": 300025
+  },
+  {
+    "item_id": "item-026",
+    "prompt": "A purple torus on a plain background, variation 026",
+    "seed": 300026
+  },
+  {
+    "item_id": "item-027",
+    "prompt": "A white ceramic cup on a plain background, variation 027",
+    "seed": 300027
+  },
+  {
+    "item_id": "item-028",
+    "prompt": "A wooden chair on a plain background, variation 028",
+    "seed": 300028
+  },
+  {
+    "item_id": "item-029",
+    "prompt": "A glass bottle on a plain background, variation 029",
+    "seed": 300029
+  },
+  {
+    "item_id": "item-030",
+    "prompt": "A paper boat on a plain background, variation 030",
+    "seed": 300030
+  },
+  {
+    "item_id": "item-031",
+    "prompt": "A metal key on a plain background, variation 031",
+    "seed": 300031
+  },
+  {
+    "item_id": "item-032",
+    "prompt": "A small clock on a plain background, variation 032",
+    "seed": 300032
+  },
+  {
+    "item_id": "item-033",
+    "prompt": "A stone arch on a plain background, variation 033",
+    "seed": 300033
+  },
+  {
+    "item_id": "item-034",
+    "prompt": "A folded umbrella on a plain background, variation 034",
+    "seed": 300034
+  },
+  {
+    "item_id": "item-035",
+    "prompt": "A woven basket on a plain background, variation 035",
+    "seed": 300035
+  },
+  {
+    "item_id": "item-036",
+    "prompt": "A toy train on a plain background, variation 036",
+    "seed": 300036
+  },
+  {
+    "item_id": "item-037",
+    "prompt": "A leaf on a plain background, variation 037",
+    "seed": 300037
+  },
+  {
+    "item_id": "item-038",
+    "prompt": "A flower on a plain background, variation 038",
+    "seed": 300038
+  },
+  {
+    "item_id": "item-039",
+    "prompt": "A lantern on a plain background, variation 039",
+    "seed": 300039
+  },
+  {
+    "item_id": "item-040",
+    "prompt": "A book on a plain background, variation 040",
+    "seed": 300040
+  },
+  {
+    "item_id": "item-041",
+    "prompt": "A red cube on a plain background, variation 041",
+    "seed": 300041
+  },
+  {
+    "item_id": "item-042",
+    "prompt": "A blue sphere on a plain background, variation 042",
+    "seed": 300042
+  },
+  {
+    "item_id": "item-043",
+    "prompt": "A green cylinder on a plain background, variation 043",
+    "seed": 300043
+  },
+  {
+    "item_id": "item-044",
+    "prompt": "A yellow cone on a plain background, variation 044",
+    "seed": 300044
+  },
+  {
+    "item_id": "item-045",
+    "prompt": "A orange pyramid on a plain background, variation 045",
+    "seed": 300045
+  },
+  {
+    "item_id": "item-046",
+    "prompt": "A purple torus on a plain background, variation 046",
+    "seed": 300046
+  },
+  {
+    "item_id": "item-047",
+    "prompt": "A white ceramic cup on a plain background, variation 047",
+    "seed": 300047
+  },
+  {
+    "item_id": "item-048",
+    "prompt": "A wooden chair on a plain background, variation 048",
+    "seed": 300048
+  },
+  {
+    "item_id": "item-049",
+    "prompt": "A glass bottle on a plain background, variation 049",
+    "seed": 300049
+  },
+  {
+    "item_id": "item-050",
+    "prompt": "A paper boat on a plain background, variation 050",
+    "seed": 300050
+  },
+  {
+    "item_id": "item-051",
+    "prompt": "A metal key on a plain background, variation 051",
+    "seed": 300051
+  },
+  {
+    "item_id": "item-052",
+    "prompt": "A small clock on a plain background, variation 052",
+    "seed": 300052
+  },
+  {
+    "item_id": "item-053",
+    "prompt": "A stone arch on a plain background, variation 053",
+    "seed": 300053
+  },
+  {
+    "item_id": "item-054",
+    "prompt": "A folded umbrella on a plain background, variation 054",
+    "seed": 300054
+  },
+  {
+    "item_id": "item-055",
+    "prompt": "A woven basket on a plain background, variation 055",
+    "seed": 300055
+  },
+  {
+    "item_id": "item-056",
+    "prompt": "A toy train on a plain background, variation 056",
+    "seed": 300056
+  },
+  {
+    "item_id": "item-057",
+    "prompt": "A leaf on a plain background, variation 057",
+    "seed": 300057
+  },
+  {
+    "item_id": "item-058",
+    "prompt": "A flower on a plain background, variation 058",
+    "seed": 300058
+  },
+  {
+    "item_id": "item-059",
+    "prompt": "A lantern on a plain background, variation 059",
+    "seed": 300059
+  },
+  {
+    "item_id": "item-060",
+    "prompt": "A book on a plain background, variation 060",
+    "seed": 300060
+  },
+  {
+    "item_id": "item-061",
+    "prompt": "A red cube on a plain background, variation 061",
+    "seed": 300061
+  },
+  {
+    "item_id": "item-062",
+    "prompt": "A blue sphere on a plain background, variation 062",
+    "seed": 300062
+  },
+  {
+    "item_id": "item-063",
+    "prompt": "A green cylinder on a plain background, variation 063",
+    "seed": 300063
+  },
+  {
+    "item_id": "item-064",
+    "prompt": "A yellow cone on a plain background, variation 064",
+    "seed": 300064
+  },
+  {
+    "item_id": "item-065",
+    "prompt": "A orange pyramid on a plain background, variation 065",
+    "seed": 300065
+  },
+  {
+    "item_id": "item-066",
+    "prompt": "A purple torus on a plain background, variation 066",
+    "seed": 300066
+  },
+  {
+    "item_id": "item-067",
+    "prompt": "A white ceramic cup on a plain background, variation 067",
+    "seed": 300067
+  },
+  {
+    "item_id": "item-068",
+    "prompt": "A wooden chair on a plain background, variation 068",
+    "seed": 300068
+  },
+  {
+    "item_id": "item-069",
+    "prompt": "A glass bottle on a plain background, variation 069",
+    "seed": 300069
+  },
+  {
+    "item_id": "item-070",
+    "prompt": "A paper boat on a plain background, variation 070",
+    "seed": 300070
+  },
+  {
+    "item_id": "item-071",
+    "prompt": "A metal key on a plain background, variation 071",
+    "seed": 300071
+  },
+  {
+    "item_id": "item-072",
+    "prompt": "A small clock on a plain background, variation 072",
+    "seed": 300072
+  },
+  {
+    "item_id": "item-073",
+    "prompt": "A stone arch on a plain background, variation 073",
+    "seed": 300073
+  },
+  {
+    "item_id": "item-074",
+    "prompt": "A folded umbrella on a plain background, variation 074",
+    "seed": 300074
+  },
+  {
+    "item_id": "item-075",
+    "prompt": "A woven basket on a plain background, variation 075",
+    "seed": 300075
+  },
+  {
+    "item_id": "item-076",
+    "prompt": "A toy train on a plain background, variation 076",
+    "seed": 300076
+  },
+  {
+    "item_id": "item-077",
+    "prompt": "A leaf on a plain background, variation 077",
+    "seed": 300077
+  },
+  {
+    "item_id": "item-078",
+    "prompt": "A flower on a plain background, variation 078",
+    "seed": 300078
+  },
+  {
+    "item_id": "item-079",
+    "prompt": "A lantern on a plain background, variation 079",
+    "seed": 300079
+  },
+  {
+    "item_id": "item-080",
+    "prompt": "A book on a plain background, variation 080",
+    "seed": 300080
+  },
+  {
+    "item_id": "item-081",
+    "prompt": "A red cube on a plain background, variation 081",
+    "seed": 300081
+  },
+  {
+    "item_id": "item-082",
+    "prompt": "A blue sphere on a plain background, variation 082",
+    "seed": 300082
+  },
+  {
+    "item_id": "item-083",
+    "prompt": "A green cylinder on a plain background, variation 083",
+    "seed": 300083
+  },
+  {
+    "item_id": "item-084",
+    "prompt": "A yellow cone on a plain background, variation 084",
+    "seed": 300084
+  },
+  {
+    "item_id": "item-085",
+    "prompt": "A orange pyramid on a plain background, variation 085",
+    "seed": 300085
+  },
+  {
+    "item_id": "item-086",
+    "prompt": "A purple torus on a plain background, variation 086",
+    "seed": 300086
+  },
+  {
+    "item_id": "item-087",
+    "prompt": "A white ceramic cup on a plain background, variation 087",
+    "seed": 300087
+  },
+  {
+    "item_id": "item-088",
+    "prompt": "A wooden chair on a plain background, variation 088",
+    "seed": 300088
+  },
+  {
+    "item_id": "item-089",
+    "prompt": "A glass bottle on a plain background, variation 089",
+    "seed": 300089
+  },
+  {
+    "item_id": "item-090",
+    "prompt": "A paper boat on a plain background, variation 090",
+    "seed": 300090
+  },
+  {
+    "item_id": "item-091",
+    "prompt": "A metal key on a plain background, variation 091",
+    "seed": 300091
+  },
+  {
+    "item_id": "item-092",
+    "prompt": "A small clock on a plain background, variation 092",
+    "seed": 300092
+  },
+  {
+    "item_id": "item-093",
+    "prompt": "A stone arch on a plain background, variation 093",
+    "seed": 300093
+  },
+  {
+    "item_id": "item-094",
+    "prompt": "A folded umbrella on a plain background, variation 094",
+    "seed": 300094
+  },
+  {
+    "item_id": "item-095",
+    "prompt": "A woven basket on a plain background, variation 095",
+    "seed": 300095
+  },
+  {
+    "item_id": "item-096",
+    "prompt": "A toy train on a plain background, variation 096",
+    "seed": 300096
+  },
+  {
+    "item_id": "item-097",
+    "prompt": "A leaf on a plain background, variation 097",
+    "seed": 300097
+  },
+  {
+    "item_id": "item-098",
+    "prompt": "A flower on a plain background, variation 098",
+    "seed": 300098
+  },
+  {
+    "item_id": "item-099",
+    "prompt": "A lantern on a plain background, variation 099",
+    "seed": 300099
+  },
+  {
+    "item_id": "item-100",
+    "prompt": "A book on a plain background, variation 100",
+    "seed": 300100
+  }
+]
