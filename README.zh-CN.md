@@ -170,6 +170,8 @@ tarball 安装时将 args 指向 `node_modules/comfyui-light-mcp/dist/index.js`�
 
 数据库位于 `DATA_DIR/comfyui-light.db`，使用 WAL。DATA_DIR 应位于本地可写磁盘；禁止多个 MCP 进程共享同一数据库。v1–v4（包括实验 P4.1 两种变体）事务迁移至 v5；缺少历史工作流指纹的 pending 会暂停，前次尝试未确认终态时先对账再考虑重试。重复打开 v5 幂等；未知新 schema 拒绝打开。v5 触发器拒绝旧程序连接写入，不能删除保护来降级使用。
 
+打开、升级数据库及启动恢复时，也会将“所有预期 job 均存在且全部 invalid”的历史 running 批次修正为 failed，保留 job、Attempt 和幂等键；混合状态、记录不完整或仍未决的批次保持原状态。
+
 升级前停止 MCP 客户端进程并等待退出，无写入期间复制整个 DATA_DIR，包括仍存在的 `-wal/-shm`。活跃数据库请使用 SQLite 在线备份 API，不能只复制 `.db`。OUTPUT_DIR、工作流/manifest 和 ComfyUI 输入素材另外备份。在线一致性备份示例，在已安装包目录执行：
 
 ```powershell

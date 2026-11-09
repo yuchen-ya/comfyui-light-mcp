@@ -164,6 +164,8 @@ For a tarball installation, point `args` into `node_modules/comfyui-light-mcp/di
 
 State lives at `DATA_DIR/comfyui-light.db` using WAL. Keep the whole DATA_DIR on a local writable disk; do not share one database between simultaneous MCP processes. Schema v1–v4 (including the experimental P4.1 variants) migrates transactionally to v5. Historical pending jobs without workflow fingerprints are paused; unconfirmed previous attempts reconcile before retry. Reopening v5 is idempotent. Newer unknown schemas are rejected. v5 triggers reject writes from older application connections; do not remove the guards.
 
+Opening/upgrading a database and startup recovery also correct legacy `running` batches to `failed` when every expected job exists and is `invalid`. This preserves job records, attempts and idempotency keys; mixed, incomplete and unresolved batches keep their existing status.
+
 Before upgrading, stop the MCP client process and wait for its exit. Then copy the entire DATA_DIR, including any `-wal` and `-shm` files, while no process writes it. For a live database use SQLite's online backup API instead of copying only the `.db` file. Retain OUTPUT_DIR, workflow/manifest pairs and ComfyUI inputs separately. Example consistent online backup, run in the installed package directory:
 
 ```powershell

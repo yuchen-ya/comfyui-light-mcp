@@ -127,8 +127,26 @@ const JOB_COLS = [
   "submitted_at", "started_at", "finished_at"
 ] as const;
 
+/** Repair the historical creation bug only when every expected job is present and invalid.
+ * Keep the original finish time, otherwise use the latest recorded job finish or batch creation.
+ * Shared by migration (inside its transaction) and startup recovery; never touches job/attempt data.
+ */
+export function repairLegacyInvalidBatches(db: Database.Database): void {
+  db.prepare(`
+UPDATE batches SET status = 'failed', finished_at = COALESCE(finished_at,
+  (SELECT MAX(j.finished_at) FROM jobs j WHERE j.batch_id = batches.id), created_at)
+WHERE status = 'running' AND total > 0
+  AND total = (SELECT COUNT(*) FROM jobs j WHERE j.batch_id = batches.id)
+  AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.batch_id = batches.id AND j.status != 'invalid')
+`).run();
+}
+
 export class BatchStore {
   constructor(private readonly db: Database.Database) {}
+
+  repairLegacyInvalidBatches(): void {
+    repairLegacyInvalidBatches(this.db);
+  }
 
   /** 在单个 SQLite 事务中执行（初始记录创建必须原子，Task 004 §三） */
   transaction<T>(fn: () => T): T {

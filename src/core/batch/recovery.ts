@@ -35,6 +35,7 @@ export interface RecoveryDeps {
 }
 
 export async function recoverInFlight(deps: RecoveryDeps): Promise<RecoveryReport> {
+  deps.store.repairLegacyInvalidBatches();
   const report: RecoveryReport = {
     resolved: 0,
     requeued: 0,

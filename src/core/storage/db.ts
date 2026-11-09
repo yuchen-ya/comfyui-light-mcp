@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { repairLegacyInvalidBatches } from "../batch/store.js";
 
 /**
  * SQLite 打开与迁移。WAL + 外键约束。
@@ -190,5 +191,7 @@ BEGIN
 END;`);
       }
     }
+    // Also repair existing v5 files, under the same writer guard and migration transaction.
+    repairLegacyInvalidBatches(db);
   })();
 }
