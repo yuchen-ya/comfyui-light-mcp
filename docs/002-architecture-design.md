@@ -221,15 +221,18 @@ export class JobRunner {
     // 返回 null = 占位失败（另一路径已在处理）——多 tick 并发天然防重
 }
 
-// core/batch/scheduler.ts（已实现）—— 双窗口提交控制
+// core/batch/scheduler.ts（已实现；P4.1 加固）—— 双窗口提交控制
 //   maxInFlight（默认 1）：在途上限 = 状态 ∈ {submitting, submission_unknown, queued, executing} 的 job 数
 //     —— 限制对 ComfyUI 的总未决提交量；submission_unknown 占额（它可能仍在远端执行）
 //   maxQueuedJobs（默认 1）：排队上限 = 状态 ∈ {queued} 的 job 数 —— 限制占用 ComfyUI 队列深度
 //   提交条件：inFlight < maxInFlight 且 queued < maxQueuedJobs；
 //   取件顺序：全局 FIFO（batch 创建序 rowid，batch 内按 idx；created_at 同毫秒也稳定）
-//   每个 tick：① 重试重置（failed/timeout 且 attempt_no<max_attempts → pending；unknown 永不重试）
-//              ② continue_on_error=false 级联放弃（且在提交循环内每轮重查——同 tick 内刚失败立即拦下后续）
-//              ③ 窗口内逐个提交（ticking 互斥 + 条件占位双保险，tick 并发不重复提交同一 job）
+//   每个 tick：⓪ 工作流指纹对账（漂移 → 暂停该 batch 剩余 pending；恢复一致 → 解除暂停续跑，P4.1）
+//              ① 重试重置（failed/timeout 且 attempt_no<max_attempts → pending；unknown 永不重试）
+//              ② continue_on_error=false 级联放弃（仅【终态】失败——重试未用尽先重试；
+//                 且在提交循环内每轮重查——同 tick 内刚失败立即拦下后续，P4.1 §6.2 组合语义）
+//              ③ 窗口内逐个提交（ticking 互斥 + 条件占位双保险，tick 并发不重复提交同一 job；
+//                 提交前逐 job 校验 batch 指纹快照；重试未决 batch 的其余 pending 暂缓 held）
 export class Scheduler {
   ensureStarted(): void;   // 周期 500ms 定时器（unref）+ 立即一拍
   stop(): void;
@@ -261,6 +264,7 @@ export class Engine {
 - **工作流文件**：ComfyUI 原生导出的 **API 格式 JSON**（用户已测试过的即用），命名 `foo-api.json`，**Agent 永远拿不到修改整图的能力**。
 - **manifest 文件**：`foo.manifest.json`，与工作流文件同目录成对存在。显式声明 Agent 可改的参数白名单（类型/默认/枚举/范围/seed 语义）。`workflows/examples/` 提供完整示例。
 - **default 语义（Task 004 §二.4 明确）**：参数显式提供 → 用提供值；未提供但 manifest 有 default → 用 default 值；两者皆无 → 保留工作流模板原值。`resolved_json` 记录全部 manifest 参数的实际生效值（含模板原值），保证可复现。
+- **default 完整校验（P4.1）**：加载时校验 default 自身满足声明约束（类型/min/max/step 对齐/enum 合法值/seed 规则——-1 哨兵或值域内整数）；非法 manifest 整体拒绝注册并进 LoadReport（错误精确到参数与原因）。
 - 禁止项落实为机制：`run_workflow` 的参数只经 manifest 白名单校验后定点覆写（mapper），不存在"提交任意 JSON"通道（metabrain 的 `queue_custom_prompt` 不移植）。
 - manifest 手写成本控制：提供 `scripts/` 下的 manifest 生成辅助（Phase 2 可选：从 API JSON 列出候选节点/输入供人挑选），**不做自动全量参数暴露**（metabrain 教训：`=>` 节点全输入暴露 + typeof 四类推断不可靠，审计 §1.2）。
 
@@ -320,45 +324,77 @@ CREATE INDEX idx_jobs_pending   ON jobs(batch_id, idx) WHERE status = 'pending';
 CREATE INDEX idx_jobs_retryable ON jobs(batch_id, idx) WHERE status IN ('failed','timeout');
 ```
 
+**迁移 v3（Task 005 / P4.1）**：工作流版本保护 + 幂等请求指纹（batches 三新列，job 级不复制 workflow JSON）：
+
+```sql
+ALTER TABLE batches ADD COLUMN manifest_fingerprint TEXT;  -- batch 创建时 manifest 内容指纹（canonical sha256）
+ALTER TABLE batches ADD COLUMN graph_fingerprint TEXT;     -- batch 创建时 API 图内容指纹（即实际提交内容）
+ALTER TABLE batches ADD COLUMN request_fingerprint TEXT;   -- 批量请求内容指纹（幂等重放比对）
+```
+
+- 指纹 = canonical JSON（递归排序键，数组有序）→ sha256；排版/键序变化不影响，语义内容变化必然反映。
+- v2 旧库迁移上行三列为 NULL → 跳过对应校验（尽力兼容，不阻断旧 batch 续跑）。
+- `request_fingerprint` 覆盖：workflow name / manifest version / 双内容指纹 / runs 内容及顺序 / continue_on_error / max_attempts（含钳制归一化）。
+
 ### 6.2 状态机
 
 ```
 Job:   pending ─→ submitting ─→ queued ─→ executing ─┬→ succeeded
-          ↑            │            │        │        ├→ failed     ─(attempt_no<max)─→ pending（重试）
-          │            │            │        │        ├→ timeout    ─(同上，先 interrupt)
-          │            │            │        │        └→ cancelled
-          │            ↓            ↓        ↓
-          │      submission_unknown ─┬→ (恢复时在 /queue 或 /history 中找到) → queued/executing/终态，继续跟踪
-          │                          └→ (两处均无) → **保持 submission_unknown**（Task 003 A1 确认：
-          │                             不伪装 failed、不自动重提；get_batch 原样区分；batch 视为未决=running）
+          ↑ ↑          │            │        │        ├→ failed     ─(attempt_no<max)─→ pending（重试）
+          │ │          │            │        │        ├→ timeout    ─(同上，先组合取消)
+          │ │          │            │        │        ├→ cancelled  （用户/外部中断；级联放弃 BATCH_ABORTED）
+          │ │          │            │        │        └→ paused     ─(工作流指纹还原)→ pending（P4.1）
+          │ │          ↓            ↓        ↓
+          │ │    submission_unknown ─┬→ (恢复时在 /queue 或 /history 中找到) → queued/executing/终态，继续跟踪
+          │ │                        └→ (两处均无) → **保持 submission_unknown**（Task 003 A1 确认：
+          │ │                           不伪装 failed、不自动重提；get_batch 原样区分；batch 视为未决=running）
+          │ └─(WORKFLOW_VERSION_MISMATCH，P4.1)→ paused（终态前可逆：指纹还原后调度器解除）
           └→ invalid（参数校验失败，创建时即定，终态，不占提交窗口）
         （提交抛错/网络失败）（/queue 中）（WS executing）（终态；WS+history 双确认）
 
 Batch: running ─┬→ completed   （全部 succeeded）
-                ├→ partial     （成功与 invalid/failed/timeout/submission_unknown 并存）
+                ├→ partial     （成功与 invalid/failed/timeout/cancelled 并存收敛）
                 ├→ failed      （全部非 succeeded）
                 └→ cancelled   （取消且无在途）
+      （paused / submission_unknown / 重试未决 均计"未决"→ batch 保持 running）
 ```
+
+**中断终态语义（P4.1 统一，四类绝不混淆）**：
+
+| 终态 | 语义 | 触发来源 |
+|---|---|---|
+| `cancelled` | 用户主动取消 | WS `execution_interrupted` / history `interrupted`（非超时取消引发）；级联放弃（BATCH_ABORTED）；未来 cancel_batch |
+| `timeout` | 执行超时 | tracker 墙钟超时 → **先组合取消再定终态**；取消期间到达的 `interrupted` 事件/记录是我们自己取消的效果 → 仍判 timeout（不降级为 cancelled/failed），`error_json.remote_cancel` 保留远端取消结果；取消期间任务恰好由事件定终态（如成功）→ 先到者为准 |
+| `failed` | ComfyUI 执行失败 | WS `execution_error` / history `error`（终态优先级：error/interrupted 先于 outputs 存在性）；提交被拒（COMFY_REJECTED） |
+| `submission_unknown` | 提交结果不确定 | 网络/崩溃；两处查证皆无 → 保持，不重提（A1） |
 
 规则：
 
 - **部分容错（已确认决策，Task 004 已实现）**：参数校验失败的 run **不阻塞整批**——合法 run 正常创建提交，非法 run 以 `invalid` 终态独立落库（error 含逐字段三段式 issues），batch 汇总中计入失败侧。`run_workflow`（runs 数组）响应带 `invalid` 计数，明细经 get_batch(status=invalid) 获取。
-- **失败隔离（已实现）**：单 job 失败不影响 batch 内其他 job（默认 `continue_on_error=true`；false 时首个终态失败级联放弃剩余 pending → cancelled/BATCH_ABORTED，且调度器在同一 tick 内立即拦截后续提交）。
+- **失败隔离（已实现；P4.1 修订组合语义）**：单 job 失败不影响 batch 内其他 job（默认 `continue_on_error=true`）。`continue_on_error=false × max_attempts>1` 的精确语义（P4.1 §6.2）：
+  1. **失败允许先重试**：failed/timeout 且次数未用尽 → 下一 tick 重置 pending 重提（全新 prompt_id）；
+  2. **重试未决期间该 batch 的其余 pending 暂缓提交**（held）——不放弃也不消耗生成，等重试定局；
+  3. **级联取消仅在终态失败时触发**：invalid（创建即终态，无重试概念）或 failed/timeout 且 `attempt_no ≥ max_attempts` → 剩余 pending 全部 `cancelled`/BATCH_ABORTED；同一 tick 内刚用尽重试也立即拦截（提交循环每轮重查）；
+  4. **在途 job 不受级联影响**：已提交的 queued/executing 照常执行至终态；
+  5. **尚未提交的 job → cancelled**（BATCH_ABORTED，明示未消耗生成）。
+- **工作流版本保护（P4.1 已实现）**：batch 创建时快照 `workflow_version + manifest_fingerprint + graph_fingerprint`（v3 列）；恢复与每 tick 提交前比对当前注册工作流指纹。漂移 → 该 batch 剩余 pending 转 `paused`（error=WORKFLOW_VERSION_MISMATCH，含差异明细），**绝不静默用新版本续跑旧 batch**；其他 batch 不受影响；已提交的在途 job 照常定终态（旧图已在 ComfyUI 侧）。工作流内容还原（指纹恢复一致）→ 调度器自动解除暂停续跑。v2 旧行指纹为 NULL → 跳过校验（尽力兼容）。
+- **Manifest default 完整校验（P4.1 已实现）**：default 必须自身满足声明的全部约束——类型正确（string/number/integer/boolean/enum）、min/max 满足、step 对齐（相对 min）、enum default 须在合法值内、seed default 只允许 -1（随机哨兵，不受 min 约束）或 [min??0, max??0xffffffff] 内整数。非法 manifest **整体拒绝注册**并进 LoadReport（精确到参数与原因）。
 - **重试（已实现）**：仅对 `failed/timeout` 且 `attempt_no < max_attempts`（默认 1 即不重试，上限 5；`submission_unknown` 永不自动重试）。每次尝试全新 prompt_id + 独立 `job_attempts` 行，历史只增不改；重试未用尽期间 batch 视为未决（保持 running）。
 - **submission_unknown（Task 003 A1 最终语义，已实测落地）**：`submitting` 态遇网络失败/进程崩溃 → 入 `submission_unknown`。**prompt_id 在提交动作之前已持久化**（runner 固定顺序：生 id → 事务落库（含 attempt 行）→ POST），因此恢复时总是可查证。恢复判定：能查到（`/queue` 或 `/history/{prompt_id}`）→ 继续跟踪或定终态；**两处皆无 → 保持 submission_unknown 状态原样**——不伪装成 failed、不自动重提（0.41 实测同 prompt_id 重提会重复执行，docs/003 F2）、get_batch 单列 `unknown` 统计、batch 状态视为未决（保持 running）、**持续占用 MAX_IN_FLIGHT 在途额度**（它可能仍在远端执行——窗口层落实"宁可保留 unknown 也不重复生成"）。
-- **timeout（Task 004 §二.2 修订，已实现）**：触发时先向 ComfyUI 发送**组合取消**——`POST /queue {delete:[id]}`（移除排队项）+ `POST /interrupt {prompt_id}`（终止执行项）。两动作对"错误状态"均为已验证的无害 no-op（docs/003 F5），组合发送无竞态空窗（任务恰在两动作间由 queued 转 executing 也被覆盖）。取消期间 job 若已由事件定终态，以先到者为准（不覆盖）。远端取消结果（ok/error 明细）记入 error_json.remote_cancel。绝不静默超时（metabrain 缺陷：超时后远端继续跑，审计 §1.3）。
+- **timeout（Task 004 §二.2 修订 + P4.1 竞态语义固化）**：触发时先向 ComfyUI 发送**组合取消**——`POST /queue {delete:[id]}`（移除排队项）+ `POST /interrupt {prompt_id}`（终止执行项）。两动作对"错误状态"均为已验证的无害 no-op（docs/003 F5），组合发送无竞态空窗（任务恰在两动作间由 queued 转 executing 也被覆盖）。取消期间：**interrupted 事件/记录 = 我们取消的效果 → 终态仍为 timeout**（不降级 cancelled/failed，错误消息注明）；success/error 等真实事件 → 先到者为准（success 的异步结算先于 timeout 判定被等待）。远端取消结果（ok/error 明细）记入 error_json.remote_cancel。绝不静默超时（metabrain 缺陷：超时后远端继续跑，审计 §1.3）。
 - **History 终态优先级（Task 004 §二.1 修订，已实现）**：`error/interrupted` 判定**优先于** outputs 存在性——error 绝不因存在部分 outputs 被判 succeeded（tracker 轮询、settleFromHistory 守卫、recovery 三处统一走 `historyVerdict`）。
-- **幂等性（已实现）**：
-  - batch 级：`idempotency_key` 唯一约束，重复 create 返回既有 batch（24h TTL 内）。
+- **幂等性（已实现；P4.1 加固为内容感知）**：
+  - batch 级：`idempotency_key` 唯一约束 + **请求内容指纹比对**（P4.1）。同键重放：内容一致（canonical JSON，参数键序无关）→ 返回既有 batch（不建新行、不产生新提交）；**内容不同 → `IDEMPOTENCY_CONFLICT`**（含既有/本次指纹短前缀，须换新键），既有 batch 不受影响。并发 UNIQUE 竞争路径同样先比对指纹再决定命中/冲突。指纹覆盖 workflow name / manifest version / 双内容指纹 / runs 内容及顺序 / continue_on_error / max_attempts（钳制归一化）。v3 前旧行无指纹 → 按命中处理（尽力兼容）。
   - job 级：`(batch_id, idx)` 唯一；`submission_unknown` 查证流程见上，不做盲目双提交。
 - **结果关联**：`executed` 事件 + `/history/{prompt_id}` 双通道收获 outputs（images/gifs/音频均收，metabrain 只认 images，审计 §1.3），统一转 `OutputRef{filename, subfolder, type, kind}` 落库。
 - **输出落盘（已确认决策，Task 004 完成按需下载）**：`AUTO_SAVE_OUTPUTS=true`（默认）时 job 终态成功即经 `/view` 下载到 `OUTPUT_DIR/<batch_id>/<idx>/<filename>`（重名自动加序号），`OutputRef.local_path` 记录绝对路径；false 时结算只存引用（kind+filename），`get_result(download=true)`（默认）按需下载并持久化（幂等，`download:false` 只读引用）。
 - **分页**：`get_batch` 按 `(batch_id, idx)` 排序，`limit`（默认 20，上限 100）+ `offset`；v1 用 offset（SQLite 窗口查询），规模到万级再评估 cursor。
-- **重启恢复**（`recovery.ts`，启动时一次；A1 语义已实现并测试）：
+- **重启恢复**（`recovery.ts`，启动时一次；A1 语义 + P4.1 加固均已实现并测试）：
   1. 扫部分索引得存量在途 job（含 `submission_unknown`）；
-  2. 有 `prompt_id` → `/history/{id}`：有记录 → 按 `historyVerdict` 终态优先级定终态（error/interrupted 先判；成功才收获 outputs）；无 → 查 `/queue`：在队列（running/pending）→ 重新跟踪（不重提）；**都不在 → 保持 `submission_unknown`**（不伪装 failed、不自动重提，见上）；
+  2. 有 `prompt_id` → `/history/{id}`：有记录 → 按 `historyVerdict` 终态优先级定终态（error/interrupted 先判，**interrupted → cancelled**（P4.1）；成功才收获 outputs）；无 → 查 `/queue`：在队列（running/pending）→ 重新跟踪（不重提）；**都不在 → 保持 `submission_unknown`**（不伪装 failed、不自动重提，见上）；ComfyUI 整体不可达时同样落入该保守分支（下次启动再查证）；
   3. 无 `prompt_id` → 保守置 `submission_unknown` 同上款（runner 顺序保证实际不会发生）；
-  4. 恢复后 `engine.start()` 启动调度：重跟踪的在途续判终态，存量 pending（含重启前未跑完的批量）由 Scheduler 续跑。
+  4. **工作流指纹校验（P4.1）**：含 pending job 的 running batch 逐一比对指纹快照，漂移 → 暂停其 pending（报告 `pausedOnVersionMismatch`）；恢复多次运行幂等（已终态 job 不重扫、已跟踪 job `tracker.track` 去重、输出只收获一次）；
+  5. 恢复后 `engine.start()` 启动调度：重跟踪的在途续判终态，存量 pending（含重启前未跑完的批量）由 Scheduler 续跑（指纹一致才提交）。
 
 ## 7. 核心 MCP 工具 Schema（4 个，Task 004 已全部实现）
 
@@ -386,15 +422,15 @@ Batch: running ─┬→ completed   （全部 succeeded）
 返回：单 params → `{batch_id, index: 0, status, next: get_result(...)}`；runs → `{batch_id, total, invalid, reused, status, next: get_batch(...)}`。**部分容错**：runs 下单 run 参数错误记 invalid job（明细 get_batch(status=invalid)），合法 run 照常提交；单 params 简写参数错误 → 整体 isError（P2 语义不变）。
 草案中的 `dry_run / wait / max_retries / timeout_ms` **未实现**（dry_run 可由 list_workflows 参数表 + 本地校验替代；wait 与 MCP 客户端超时冲突；重试/超时以 batch 级 options 落地）——如后续需要再立项，不占当前接口。
 
-### get_batch（已实现；stats 含 unknown 单列）
+### get_batch（已实现；stats 含 unknown/paused 单列）
 
 ```json
 { "name": "get_batch",
   "inputSchema": { "batch_id": "...", "limit": 20, "offset": 0,
-                   "status": "pending|invalid|submitting|unknown|queued|executing|succeeded|failed|timeout|cancelled（可选过滤，统计不受影响）" } }
+                   "status": "pending|invalid|submitting|unknown|queued|executing|succeeded|failed|timeout|cancelled|paused（可选过滤，统计不受影响）" } }
 ```
 
-返回：`{batch_id, workflow, status, stats: {total, succeeded, failed, running, queued, pending, invalid, unknown}, jobs: [{index, label, status, attempt_no, prompt_id, error: {code, message≤200}|null, outputs_count}], next_offset?}`。**submission_unknown 单列为 `unknown`，绝不混入 failed**；failed 口径 = failed+timeout+cancelled；不返回完整 workflow JSON / base64 / 完整参数与日志。
+返回：`{batch_id, workflow, status, stats: {total, succeeded, failed, running, queued, pending, invalid, unknown, paused}, jobs: [{index, label, status, attempt_no, prompt_id, error: {code, message≤200}|null, outputs_count}], next_offset?}`。**submission_unknown 单列为 `unknown`、版本漂移暂停单列为 `paused`，绝不混入 failed**；failed 口径 = failed+timeout+cancelled；不返回完整 workflow JSON / base64 / 完整参数与日志。
 
 ### get_result（已实现；download 按需下载）
 
@@ -442,7 +478,7 @@ Batch: running ─┬→ completed   （全部 succeeded）
 | **P1 Client+总线** | comfy-http/comfy-ws/event-bus、重连、二进制帧跳过；`smoke-real-comfyui.ts` 验证 Q1/Q2 全部假设 | 冒烟脚本对本机 ComfyUI 提交→等完→收 outputs 全通 | 1–2d | ✅（11/11，docs/003） |
 | **P2 工作流+MVP** | registry/manifest/mapper + `list_workflows`/`run_workflow`(runs 长度 1)/`get_result`（不落盘）；examples 工作流对 | Agent 经 3 工具端到端出 1 张图 | 2–3d | ✅（115 测试 + 真实 e2e + Inspector，docs/004） |
 | **P3 Batch/Job** | BatchManager/Scheduler 双窗口、get_batch、失败隔离、重试、幂等键、P2 遗留修复（终态优先级/超时取消组合/按需下载/default 语义） | 10 runs 批量（混入 2 个非法 combo + 1 个 manifest 非法）失败隔离正确；重启不丢状态 | 2–3d | ✅（157 测试 + 真实 10 任务批量，docs/005） |
-| **P4 恢复+硬化** | recovery 批量场景加固、cancel_batch 辅助工具、save_dir path-jail 集成、upload_asset、错误分类打磨 | 批量执行中途 kill 重启恢复；取消工具可用 | 1–2d |
+| **P4 恢复+硬化** | ~~recovery 批量场景加固~~（**P4.1 已完成**，见 docs/006：统一中断状态/工作流版本保护/manifest default 校验/幂等指纹/组合语义/恢复 8 项）、cancel_batch 辅助工具、save_dir path-jail 集成、upload_asset、错误分类打磨 | 批量执行中途 kill 重启恢复；取消工具可用 | 1–2d |
 | **P5 发布准备** | README(中英)、npx 入口、使用文档（manifest 编写指南） | 新机器按文档 10 分钟跑通 | 0.5–1d |
 
 依赖关系：P1→P2→P3→P4 严格串行；P0 独立。合计约 7–11 个工作日。

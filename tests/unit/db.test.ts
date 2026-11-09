@@ -2,13 +2,33 @@ import { describe, expect, it } from "vitest";
 import { openDb } from "../../src/core/storage/db.js";
 
 describe("storage db", () => {
-  it("打开即迁移到 v2（user_version=2），幂等", () => {
+  it("打开即迁移到 v3（user_version=3），幂等", () => {
     const db = openDb(":memory:");
-    expect(db.pragma("user_version", { simple: true })).toBe(2);
+    expect(db.pragma("user_version", { simple: true })).toBe(3);
     db.close();
     const db2 = openDb(":memory:");
-    expect(db2.pragma("user_version", { simple: true })).toBe(2);
+    expect(db2.pragma("user_version", { simple: true })).toBe(3);
     db2.close();
+  });
+
+  it("v3：batches 新增三指纹列（工作流版本保护 + 幂等请求指纹），旧行为 NULL", () => {
+    const db = openDb(":memory:");
+    const cols = (db.prepare("PRAGMA table_info(batches)").all() as Array<{ name: string }>).map((c) => c.name);
+    for (const c of ["manifest_fingerprint", "graph_fingerprint", "request_fingerprint"]) {
+      expect(cols).toContain(c);
+    }
+    // v2 旧库迁移上来的行（未写指纹）三列为 NULL —— 不阻断、跳过比对（尽力兼容）
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO batches (id, workflow, workflow_version, status, total, options_json, created_at) VALUES (?,?,?,?,?,?,?)"
+    ).run("b-legacy", "demo", 1, "running", 1, "{}", now);
+    const row = db.prepare("SELECT manifest_fingerprint, graph_fingerprint, request_fingerprint FROM batches WHERE id='b-legacy'").get() as {
+      manifest_fingerprint: string | null;
+      graph_fingerprint: string | null;
+      request_fingerprint: string | null;
+    };
+    expect(row).toEqual({ manifest_fingerprint: null, graph_fingerprint: null, request_fingerprint: null });
+    db.close();
   });
 
   it("四张表与恢复/调度用部分索引存在", () => {

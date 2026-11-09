@@ -14,7 +14,8 @@ export const INSTRUCTIONS = `ComfyUI 轻量代理：调用你已测试的 ComfyU
 
 注意：
 - seed 参数传 -1 表示每次随机；实际使用值记录在结果的 params_resolved 中（可复现）。
-- status=submission_unknown 表示提交后结果未知（如网络中断）：系统不会自动重提以免重复生成，也持续占用并发窗口；需要重跑请用新的 run_workflow（或换 idempotency_key）。
-- 批量默认串行执行（MAX_IN_FLIGHT=1）；失败默认不重试（max_attempts 默认 1），配 max_attempts>1 时重试会用全新 prompt_id 并保留全部 attempt 历史。
-- idempotency_key 用于安全重试同一请求：同键重复调用只返回既有 batch，绝不产生重复生成。
+- 中断/失败状态语义：cancelled = 用户/外部中断；timeout = 执行超时（已尽力远端取消，错误明细含取消结果）；failed = ComfyUI 执行失败；submission_unknown = 提交后结果未知（如网络中断），系统不会自动重提以免重复生成，也持续占用并发窗口，需要重跑请用新的 run_workflow（或换 idempotency_key）。
+- status=paused 表示工作流文件在 batch 创建后被修改（WORKFLOW_VERSION_MISMATCH）：系统不会用新版本静默续跑旧 batch，剩余任务已暂停；把工作流内容还原后自动继续，或另建新 batch。
+- 批量默认串行执行（MAX_IN_FLIGHT=1）；失败默认不重试（max_attempts 默认 1），配 max_attempts>1 时重试会用全新 prompt_id 并保留全部 attempt 历史。continue_on_error=false 时：失败先重试至次数用尽，终态失败才放弃剩余任务（在途任务不受影响，照常完成）。
+- idempotency_key 用于安全重试同一请求：同键且请求内容完全一致才返回既有 batch，绝不产生重复生成；同键但内容不同会返回 IDEMPOTENCY_CONFLICT（须换新键）。
 - 输出文件保留 ComfyUI 原始文件名，按 <输出目录>/<batch_id>/<index>/ 组织。`;

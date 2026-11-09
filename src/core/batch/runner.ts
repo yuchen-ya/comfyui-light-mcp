@@ -186,7 +186,10 @@ export class JobRunner {
         total: 1,
         options_json: JSON.stringify({ continue_on_error: true, max_attempts: 1 }),
         created_at: now,
-        finished_at: null
+        finished_at: null,
+        manifest_fingerprint: wf.fingerprints.manifestFingerprint,
+        graph_fingerprint: wf.fingerprints.graphFingerprint,
+        request_fingerprint: null // 内部便捷路径，不参与幂等
       },
       [
         {

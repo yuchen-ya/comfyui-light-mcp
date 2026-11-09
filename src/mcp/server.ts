@@ -75,7 +75,7 @@ export function createMcpServer(engine: Engine): McpServer {
           .optional()
           .describe("批量运行数组（与 params 二选一）；按数组顺序调度执行"),
         label: z.string().optional().describe("单运行时的可选标记"),
-        idempotency_key: z.string().min(1).max(200).optional().describe("幂等键：同键重复调用返回既有 batch，不重复提交"),
+        idempotency_key: z.string().min(1).max(200).optional().describe("幂等键：同键+相同请求内容重复调用返回既有 batch，不重复提交；同键但内容不同返回 IDEMPOTENCY_CONFLICT"),
         continue_on_error: z.boolean().optional().describe("默认 true；false 时首个失败将放弃该 batch 剩余未提交任务"),
         max_attempts: z.number().int().min(1).max(5).optional().describe("失败重试次数上限（含首次共 N 次尝试），默认 1 不重试")
       }
@@ -139,7 +139,7 @@ export function createMcpServer(engine: Engine): McpServer {
     "get_batch",
     {
       description:
-        "查询批量运行全貌：batch 状态 + 逐状态统计（succeeded/failed/running/queued/pending/invalid/unknown——submission_unknown 单列，绝不混入 failed）+ 分页 job 列表（有界字段：状态/attempt/错误摘要/输出数，不含完整参数与日志）。status 可过滤：pending|invalid|submitting|unknown|queued|executing|succeeded|failed|timeout|cancelled。",
+        "查询批量运行全貌：batch 状态 + 逐状态统计（succeeded/failed/running/queued/pending/invalid/unknown/paused——submission_unknown 与 paused 单列，绝不混入 failed）+ 分页 job 列表（有界字段：状态/attempt/错误摘要/输出数，不含完整参数与日志）。status 可过滤：pending|invalid|submitting|unknown|queued|executing|succeeded|failed|timeout|cancelled|paused。",
       inputSchema: {
         batch_id: z.string().describe("run_workflow 返回的 batch_id"),
         limit: z.number().int().min(1).max(100).default(20).describe("分页大小，默认 20，上限 100"),

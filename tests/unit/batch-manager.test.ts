@@ -31,7 +31,8 @@ const wf: RegisteredWorkflow = {
     "4": { class_type: "TextEncode", inputs: { text: "tpl" } },
     "7": { class_type: "KSampler", inputs: { seed: 42, steps: 20 } }
   },
-  sourceFile: "t.manifest.json"
+  sourceFile: "t.manifest.json",
+  fingerprints: { manifestFingerprint: "fp-manifest-t", graphFingerprint: "fp-graph-t" }
 };
 
 let store: BatchStore;
@@ -104,14 +105,20 @@ describe("批量创建", () => {
 });
 
 describe("幂等键", () => {
-  it("同一 idempotency_key 重复调用 → 同一 batch，不新建任何行", () => {
+  it("同一 idempotency_key + 相同内容 → 同一 batch，不新建任何行（参数键序无关）", () => {
     const r1 = manager.createBatch(wf, { runs: [okRun(0), okRun(1)], idempotencyKey: "batch-request-001" });
-    const r2 = manager.createBatch(wf, { runs: [okRun(0), okRun(1)], idempotencyKey: "batch-request-001" });
+    // 参数对象键顺序不同 → 指纹一致（canonical JSON），仍幂等命中
+    const r2 = manager.createBatch(wf, {
+      runs: [
+        { label: okRun(0).label, params: { seed: 0, prompt: "sphere 0" } },
+        { label: okRun(1).label, params: { prompt: "sphere 1", seed: 1 } }
+      ],
+      idempotencyKey: "batch-request-001"
+    });
     expect(r2.batchId).toBe(r1.batchId);
     expect(r2.reused).toBe(true);
     expect(r2.total).toBe(2);
     expect(store.countJobs(r1.batchId)).toBe(2); // 未翻倍
-    expect(manager.createBatch(wf, { runs: [okRun(9)], idempotencyKey: "batch-request-001" }).batchId).toBe(r1.batchId);
     // 不同键 → 新 batch
     const r3 = manager.createBatch(wf, { runs: [okRun(0)], idempotencyKey: "another-key" });
     expect(r3.batchId).not.toBe(r1.batchId);
@@ -144,7 +151,8 @@ describe("getBatchView：统计 / 分页 / 过滤 / 有界", () => {
       queued: 1,
       pending: 1,
       invalid: 1,
-      unknown: 1
+      unknown: 1,
+      paused: 0
     });
     expect(view.status).toBe("running");
   });

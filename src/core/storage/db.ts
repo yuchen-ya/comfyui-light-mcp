@@ -72,6 +72,20 @@ CREATE INDEX idx_jobs_recover ON jobs(status)
 CREATE INDEX idx_jobs_pending ON jobs(batch_id, idx) WHERE status = 'pending';
 CREATE INDEX idx_jobs_retryable ON jobs(batch_id, idx) WHERE status IN ('failed','timeout');
 `
+  },
+  {
+    // v3（Task 005 / P4.1）：工作流版本保护 + 幂等指纹。
+    // - manifest_fingerprint / graph_fingerprint：batch 创建时的工作流内容快照
+    //   （提交/恢复时比对，漂移 → 暂停该 batch 剩余 pending job，不静默用新版本续跑）。
+    // - request_fingerprint：批量请求内容指纹（同 idempotency_key 重放时比对，
+    //   内容不同 → IDEMPOTENCY_CONFLICT）。旧行为 NULL = 无法比对（尽力兼容）。
+    // job 级不复制 workflow JSON —— 指纹在 batch 行，一处存储。
+    version: 3,
+    sql: `
+ALTER TABLE batches ADD COLUMN manifest_fingerprint TEXT;
+ALTER TABLE batches ADD COLUMN graph_fingerprint TEXT;
+ALTER TABLE batches ADD COLUMN request_fingerprint TEXT;
+`
   }
 ];
 

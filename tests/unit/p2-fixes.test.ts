@@ -58,7 +58,8 @@ function makeWf(): RegisteredWorkflow {
       "7": { class_type: "KSampler", inputs: { seed: 42, steps: 20 } },
       "9": { class_type: "SaveImage", inputs: { images: ["8", 0] } }
     },
-    sourceFile: "t.manifest.json"
+    sourceFile: "t.manifest.json",
+    fingerprints: { manifestFingerprint: "fp-manifest-t", graphFingerprint: "fp-graph-t" }
   };
 }
 

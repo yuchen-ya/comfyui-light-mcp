@@ -1,15 +1,19 @@
 import type { BatchStore } from "./store.js";
 import type { JobRunner } from "./runner.js";
 import type { WorkflowRegistry } from "../workflow/registry.js";
+import { fingerprintMismatch } from "../workflow/fingerprint.js";
+import { pauseDriftedPendingBatches } from "./recovery.js";
 
 /**
- * Scheduler（Task 004 §四）：双窗口调度器。
+ * Scheduler（Task 004 §四 + P4.1 加固）：双窗口调度器。
  * - MAX_IN_FLIGHT：全局在途上限（submitting/submission_unknown/queued/executing——unknown 占额，
  *   因为它可能仍在远端执行；这也是"宁可保留 unknown 也不重复生成"的窗口层落实）
  * - MAX_QUEUED_JOBS：ComfyUI 排队态（queued）上限，须 ≤ MAX_IN_FLIGHT
- * - 每个 tick：① 重试重置（failed/timeout 且次数未用尽 → pending）
- *              ② continue_on_error=false 级联放弃
- *              ③ 在窗口内按（batch 创建时间, index）顺序提交 pending job
+ * - 每个 tick：⓪ 工作流指纹对账（漂移 → 暂停该 batch 剩余 pending；恢复一致 → 解除暂停续跑）
+ *              ① 重试重置（failed/timeout 且次数未用尽 → pending）
+ *              ② continue_on_error=false 级联放弃（仅【终态】失败——重试未用尽先重试，P4.1 §二.5）
+ *              ③ 在窗口内按（batch 创建时间, index）顺序提交 pending job（提交前再校验一次指纹；
+ *                重试未决的 batch 其余 pending 暂缓——heldPendingBatches）
  * - 防重复提交：ticking 互斥 + store.claimForSubmit 条件占位（`WHERE status='pending'`）双保险
  */
 
@@ -58,6 +62,7 @@ export class Scheduler {
     if (this.ticking) return;
     this.ticking = true;
     try {
+      this.reconcileWorkflowDrift();
       this.processRetries();
       this.abortOnErrorPolicy();
       // 提交循环：每次提交后重新计数（提交结果即刻反映到窗口）；
@@ -67,7 +72,9 @@ export class Scheduler {
         if (inFlight >= this.deps.maxInFlight) break;
         if (queued >= this.deps.maxQueuedJobs) break;
         this.abortOnErrorPolicy();
-        const next = this.deps.store.nextPendingJob();
+        // continue_on_error=false 的 batch 存在重试未决失败 → 其余 pending 暂缓（等重试定局）
+        const held = this.deps.store.heldPendingBatches();
+        const next = this.deps.store.nextPendingJob(held);
         if (!next) break;
         const wf = this.deps.registry.get(next.workflow);
         if (!wf) {
@@ -81,6 +88,24 @@ export class Scheduler {
             finished_at: new Date().toISOString()
           });
           this.finalizeBatch(next.job.batch_id);
+          continue;
+        }
+        // 工作流版本保护（P4.1 §二.2）：提交前比对 batch 创建时的指纹快照
+        const mismatch = fingerprintMismatch(
+          {
+            workflowVersion: next.batch.workflowVersion,
+            manifestFingerprint: next.batch.manifestFingerprint,
+            graphFingerprint: next.batch.graphFingerprint
+          },
+          { version: wf.manifest.version, ...wf.fingerprints }
+        );
+        if (mismatch) {
+          // 暂停该 batch 全部剩余 pending（不提交、不换新版本静默续跑、不影响其他 batch）
+          const n = this.deps.store.pauseBatchPendingJobs(
+            next.job.batch_id,
+            `batch 创建后工作流已变化（${mismatch}）。剩余任务已暂停；恢复原工作流内容后自动继续，或另建新 batch。`
+          );
+          if (n > 0) this.finalizeBatch(next.job.batch_id);
           continue;
         }
         const handle = await this.deps.runner.submitJob(wf, next.job);
@@ -101,13 +126,52 @@ export class Scheduler {
     }
   }
 
-  /** continue_on_error=false：batch 出现终态失败（failed/timeout/invalid）→ 剩余 pending 全部 cancelled */
+  /**
+   * continue_on_error=false：batch 出现【终态】失败（invalid，或 failed/timeout 且重试已用尽）
+   * → 剩余 pending 全部 cancelled。重试未用尽的失败先重试（P4.1 §二.5 组合语义）。
+   */
   private abortOnErrorPolicy(): void {
     for (const batchId of this.deps.store.batchesNeedingAbort()) {
       const n = this.deps.store.abortPendingJobs(
         batchId,
         "batch 内已有失败任务且 continue_on_error=false，剩余任务被放弃"
       );
+      if (n > 0) this.finalizeBatch(batchId);
+    }
+  }
+
+  /**
+   * 工作流版本保护（P4.1 §二.2）：
+   * - 漂移：含 pending 的 running batch 指纹与当前注册工作流不一致 → 暂停其 pending
+   *   （即时可见，不等到窗口空出准备提交时；与恢复共用 pauseDriftedPendingBatches）。
+   * - 还原：paused 的 batch 指纹恢复一致（用户还原了工作流内容）→ 自动解除暂停续跑。
+   */
+  private reconcileWorkflowDrift(): void {
+    try {
+      pauseDriftedPendingBatches({ store: this.deps.store, registry: this.deps.registry });
+    } catch {
+      // 单次对账失败不致命：下一拍重试；提交前还有逐 job 兜底校验
+    }
+    this.resumePausedJobs();
+  }
+
+  /** 指纹恢复一致时 paused → pending（仍漂移或工作流不在注册表 → 保持 paused） */
+  private resumePausedJobs(): void {
+    for (const batchId of this.deps.store.pausedBatches()) {
+      const batch = this.deps.store.getBatch(batchId);
+      if (!batch) continue;
+      const wf = this.deps.registry.get(batch.workflow);
+      if (!wf) continue;
+      const mismatch = fingerprintMismatch(
+        {
+          workflowVersion: batch.workflow_version,
+          manifestFingerprint: batch.manifest_fingerprint,
+          graphFingerprint: batch.graph_fingerprint
+        },
+        { version: wf.manifest.version, ...wf.fingerprints }
+      );
+      if (mismatch) continue;
+      const n = this.deps.store.resumeBatchPausedJobs(batchId);
       if (n > 0) this.finalizeBatch(batchId);
     }
   }

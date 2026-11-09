@@ -11,6 +11,10 @@ import { type JobRow, type JobError, type JobOutputAsset } from "./store.js";
  *   （docs/003 F5：interrupt 对排队任务是 no-op，两动作对错误态均为无害 no-op → 竞态安全）
  * - History 终态优先级（Task 004 §二.1）：error/interrupted 判定优先于 outputs 存在性，
  *   error 绝不因存在部分 outputs 被标成 succeeded
+ * - 中断终态语义（P4.1 统一）：
+ *   · 用户/外部中断（execution_interrupted / history interrupted，非超时取消引发）→ cancelled
+ *   · 超时取消过程中收到的 interrupted 是我们自己取消的效果 → 仍定 timeout（保留 remote_cancel）
+ *   · 未来 cancel_batch 的取消路径 → cancelled（复用本语义，cancelIntent 扩展 "user"）
  * - 成功 → /history 收获输出 → AUTO_SAVE 落盘（false 时存引用，get_result 按需下载）
  */
 
@@ -30,6 +34,12 @@ interface Tracked {
   pollTimer: NodeJS.Timeout | null;
   timeoutTimer: NodeJS.Timeout | null;
   settled: boolean;
+  /** 超时取消进行中：此期间到达的 interrupted 事件是我们自己取消的效果，终态仍为 timeout */
+  timeoutCancelInFlight: boolean;
+  /** 超时取消期间实际收到了 interrupted（写入 timeout 错误消息，便于审计） */
+  sawInterruptedDuringTimeoutCancel: boolean;
+  /** 进行中的异步结算（success → settleFromHistory）：handleTimeout 须等它定局再判 timeout（先到者为准） */
+  asyncSettle: Promise<void> | null;
 }
 
 /** history.status → 终态判定（优先级：error/interrupted > success/completed > 有输出） */
@@ -76,7 +86,10 @@ export class JobTracker {
       unsubscribe: () => {},
       pollTimer: null,
       timeoutTimer: null,
-      settled: false
+      settled: false,
+      timeoutCancelInFlight: false,
+      sawInterruptedDuringTimeoutCancel: false,
+      asyncSettle: null
     };
 
     // WS 事件驱动
@@ -90,7 +103,9 @@ export class JobTracker {
           this.deps.store.patchJob(job.id, { status: "executing" });
           break;
         case "success":
-          void this.settleFromHistory(t);
+          // success 不可能由我们的取消引发（取消 → interrupted）：正常走 history 结算；
+          // 记录在途的异步结算，供 handleTimeout 在超时取消竞态下等待（先到者为准）
+          t.asyncSettle ??= this.settleFromHistory(t);
           break;
         case "error":
           this.settle(t, "failed", {
@@ -99,9 +114,16 @@ export class JobTracker {
           });
           break;
         case "interrupted":
-          this.settle(t, "failed", {
+          if (t.timeoutCancelInFlight) {
+            // 超时取消进行中：这个 interrupted 是我们组合取消的效果——
+            // 不据此定 cancelled/failed，等 handleTimeout 统一定 timeout（保留远端取消结果）
+            t.sawInterruptedDuringTimeoutCancel = true;
+            return;
+          }
+          // 用户/外部主动中断（ComfyUI UI 停止按钮、外部 /interrupt）→ cancelled（P4.1 统一语义）
+          this.settle(t, "cancelled", {
             code: "INTERRUPTED",
-            message: "执行被中断（ComfyUI 侧 interrupt）"
+            message: "执行被中断（用户/外部 interrupt）"
           });
           break;
         default:
@@ -118,16 +140,17 @@ export class JobTracker {
           if (t.settled || !entry) return;
           const verdict = historyVerdict(entry);
           if (verdict === "success") {
-            void this.settleFromHistory(t, entry);
+            t.asyncSettle ??= this.settleFromHistory(t, entry);
           } else if (verdict === "error") {
             this.settle(t, "failed", {
               code: "EXECUTION_ERROR",
               message: "history 轮询判定终态: error"
             });
           } else if (verdict === "interrupted") {
+            if (t.timeoutCancelInFlight) return; // 超时取消的效果，交给 handleTimeout 定 timeout
             this.settle(t, "cancelled", {
               code: "INTERRUPTED",
-              message: "history 轮询判定终态: interrupted"
+              message: "history 轮询判定终态: interrupted（用户/外部中断）"
             });
           }
         })
@@ -144,11 +167,21 @@ export class JobTracker {
   }
 
   private async handleTimeout(t: Tracked, promptId: string): Promise<void> {
+    // 先立 flag 再取消：取消期间到达的 interrupted/error 事件据此分流
+    t.timeoutCancelInFlight = true;
     const remote = await this.cancelRemote(promptId);
     if (t.settled) return; // 竞态：取消进行中 job 已由事件定终态（如恰好成功），保持原判定
+    // success 事件的异步结算（settleFromHistory）可能仍在途：等它定局——
+    // 它若结算（succeeded/failed/NO_HISTORY）则以先到者为准；若因 interrupted 推迟则落到下方 timeout
+    if (t.asyncSettle) {
+      await t.asyncSettle.catch(() => undefined);
+      if (t.settled) return;
+    }
     this.settle(t, "timeout", {
       code: "TIMEOUT",
-      message: `执行超过 ${this.deps.defaultTimeoutMs}ms，已向 ComfyUI 发送组合取消（queue delete + interrupt）`,
+      message:
+        `执行超过 ${this.deps.defaultTimeoutMs}ms，已向 ComfyUI 发送组合取消（queue delete + interrupt）` +
+        (t.sawInterruptedDuringTimeoutCancel ? "；取消期间的 interrupted 事件为本次取消的效果，不改变 timeout 判定" : ""),
       remote_cancel: remote
     });
   }
@@ -192,6 +225,10 @@ export class JobTracker {
       return;
     }
     if (verdict === "interrupted") {
+      if (t.timeoutCancelInFlight) {
+        t.sawInterruptedDuringTimeoutCancel = true;
+        return; // 超时取消的效果：交给 handleTimeout 统一定 timeout
+      }
       this.settle(t, "cancelled", { code: "INTERRUPTED", message: "execution_success 后 history 记录为 interrupted" });
       return;
     }

@@ -3,6 +3,8 @@ import path from "node:path";
 import type { WorkflowGraph } from "../client/types.js";
 import { loadWorkflowGraph, WorkflowFormatError } from "./loader.js";
 import { ManifestError, parseManifest, type WorkflowManifest } from "./manifest.js";
+import { contentFingerprint } from "../../shared/fingerprint.js";
+import type { WorkflowFingerprints } from "./fingerprint.js";
 
 /** 递归收集 *.manifest.json（返回相对 workflowsDir 的路径） */
 async function listManifestFiles(root: string, rel: string): Promise<string[]> {
@@ -31,6 +33,8 @@ export interface RegisteredWorkflow {
   readonly graph: WorkflowGraph;
   /** manifest 文件绝对路径（错误定位用） */
   readonly sourceFile: string;
+  /** 内容指纹（P4.1 版本保护）：batch 创建时快照、提交/恢复时比对 */
+  readonly fingerprints: WorkflowFingerprints;
 }
 
 export interface WorkflowSummary {
@@ -113,7 +117,12 @@ export class WorkflowRegistry {
           report.errors.push({ file: mf, message: `工作流名 "${manifest.name}" 重复（已由先前的 manifest 注册）` });
           continue;
         }
-        this.byName.set(manifest.name, { manifest, graph, sourceFile: manifestPath });
+        // 内容指纹：manifest 取解析后对象（排版无关），图取归一化后实际提交内容（P4.1）
+        const fingerprints: WorkflowFingerprints = {
+          manifestFingerprint: contentFingerprint(manifest),
+          graphFingerprint: contentFingerprint(graph)
+        };
+        this.byName.set(manifest.name, { manifest, graph, sourceFile: manifestPath, fingerprints });
         report.loaded.push({
           name: manifest.name,
           description: manifest.description,
