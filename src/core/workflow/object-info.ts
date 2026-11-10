@@ -209,6 +209,38 @@ function normalizeInputSection(section: unknown): { specs: Record<string, Normal
   return { specs, malformed: false };
 }
 
+/** Named Autogrow inputs use flattened keys in API JSON; the container is not an input. */
+function expandNamedAutogrow(input: Record<string, unknown>): Record<string, unknown> | null {
+  const sections: Record<string, unknown> = { ...input };
+  const required: Record<string, unknown> = isPlainObject(input["required"]) ? { ...input["required"] } : {};
+  const optional: Record<string, unknown> = isPlainObject(input["optional"]) ? { ...input["optional"] } : {};
+  for (const section of [required, optional]) {
+    for (const [key, value] of Object.entries(section)) {
+      if (!Array.isArray(value) || value[0] !== "COMFY_AUTOGROW_V3") continue;
+      const options = value[1];
+      const template = isPlainObject(options) ? options["template"] : null;
+      if (!isPlainObject(template) || !Array.isArray(template["names"]) || !isPlainObject(template["input"])) return null;
+      const names: unknown[] = template["names"];
+      const min = template["min"];
+      if (!names.every((name): name is string => typeof name === "string" && name.length > 0) ||
+          typeof min !== "number" || !Number.isInteger(min) || min < 0 || min > names.length) return null;
+      const fields = template["input"];
+      const templateRequired = isPlainObject(fields["required"]) && Object.keys(fields["required"]).length > 0;
+      const fieldSection = templateRequired ? fields["required"] : fields["optional"];
+      if (!isPlainObject(fieldSection) || Object.keys(fieldSection).length !== 1) return null;
+      const spec = Object.values(fieldSection)[0];
+      delete section[key];
+      for (let index = 0; index < names.length; index++) {
+        const destination = templateRequired && index < min ? required : optional;
+        destination[`${key}.${names[index]}`] = spec;
+      }
+    }
+  }
+  if (input["required"] === undefined || isPlainObject(input["required"])) sections["required"] = required;
+  if (input["optional"] === undefined || isPlainObject(input["optional"])) sections["optional"] = optional;
+  return sections;
+}
+
 /** 整份 /object_info → 规范化节点表（key = class_type） */
 export function normalizeObjectInfo(raw: Record<string, ObjectInfoNode>): Record<string, NormalizedNodeInfo> {
   const out: Record<string, NormalizedNodeInfo> = {};
@@ -223,13 +255,14 @@ export function normalizeObjectInfo(raw: Record<string, ObjectInfoNode>): Record
     let hidden: Record<string, NormalizedInputSpec> = {};
     let malformed = false;
     if (isPlainObject(input)) {
-      const req = normalizeInputSection(input["required"]);
-      const opt = normalizeInputSection(input["optional"]);
-      const hid = normalizeInputSection(input["hidden"]);
+      const expanded = expandNamedAutogrow(input);
+      const req = normalizeInputSection(expanded?.["required"]);
+      const opt = normalizeInputSection(expanded?.["optional"]);
+      const hid = normalizeInputSection(expanded?.["hidden"]);
       required = req.specs;
       optional = opt.specs;
       hidden = hid.specs;
-      malformed = req.malformed || opt.malformed || hid.malformed;
+      malformed = expanded === null || req.malformed || opt.malformed || hid.malformed;
     } else if (input !== undefined) {
       malformed = true;
     }

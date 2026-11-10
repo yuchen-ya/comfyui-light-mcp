@@ -74,6 +74,48 @@ const RAW_SCHEMA: Record<string, ObjectInfoNode> = {
 
 const SCHEMA = normalizeObjectInfo(RAW_SCHEMA);
 
+describe("named Autogrow API inputs", () => {
+  const manifest: WorkflowManifest = {
+    name: "autogrow", description: "Named reference images", version: 1, workflowFile: "autogrow.json",
+    params: [{ name: "filename", node: "save", input: "filename_prefix", type: "string" }]
+  };
+  const schema = (min = 0) => normalizeObjectInfo({
+    Source: { input: {}, output: ["IMAGE", "MASK"] },
+    References: {
+      input: { required: { images: ["COMFY_AUTOGROW_V3", { template: {
+        input: { required: { image: ["IMAGE", {}] } }, names: ["image_1", "image_2", "image_3"], min
+      } }] } }, output: ["IMAGE"]
+    },
+    SaveImage: RAW_SCHEMA["SaveImage"]!
+  });
+  const graph = (inputs: Record<string, unknown>): WorkflowGraph => ({
+    source: { class_type: "Source", inputs: {} },
+    references: { class_type: "References", inputs },
+    save: { class_type: "SaveImage", inputs: { images: ["references", 0], filename_prefix: "test" } }
+  });
+
+  it("accepts zero references when the native minimum is zero", () => {
+    const report = preflightWorkflow({ graph: graph({}), manifest, objectInfo: schema() });
+    expect(report.status).toBe("passed");
+    expect(report.issues).toEqual([]);
+  });
+
+  it("accepts flattened references and still checks their link type", () => {
+    const g = graph({ "images.image_1": ["source", 0], "images.image_2": ["source", 0], "images.image_3": ["source", 0] });
+    expect(preflightWorkflow({ graph: g, manifest, objectInfo: schema() }).status).toBe("passed");
+    g["references"]!.inputs["images.image_2"] = ["source", 1];
+    const report = preflightWorkflow({ graph: g, manifest, objectInfo: schema() });
+    expect(report.issues.map(issue => [issue.code, issue.input])).toEqual([["type_mismatch", "images.image_2"]]);
+  });
+
+  it("requires the named minimum and does not accept undeclared names", () => {
+    const report = preflightWorkflow({ graph: graph({ "images.typo": ["source", 0] }), manifest, objectInfo: schema(1) });
+    expect(report.issues.map(issue => [issue.code, issue.input])).toEqual([
+      ["unknown_input", "images.typo"], ["missing_required", "images.image_1"]
+    ]);
+  });
+});
+
 // 合法图：Checkpoint → 双 CLIPTextEncode → EmptyLatent → KSampler → VAEDecode → SaveImage
 const VALID_GRAPH: WorkflowGraph = {
   "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: "qwen-image-2.1.safetensors" } },
