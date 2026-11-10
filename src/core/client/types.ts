@@ -99,6 +99,6 @@ export interface QueueInfo {
 /** /object_info/{node} 的输入规格（冒烟脚本用于构造测试图） */
 export interface ObjectInfoNode {
   name?: string;
-  input?: { required?: Record<string, unknown>; optional?: Record<string, unknown> };
+  input?: { required?: Record<string, unknown>; optional?: Record<string, unknown>; hidden?: Record<string, unknown> };
   [k: string]: unknown;
 }

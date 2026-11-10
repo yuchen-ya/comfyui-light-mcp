@@ -58,6 +58,7 @@ export class Engine {
   private readonly objectInfo: ObjectInfoCache;
   private recovery: Promise<RecoveryReport> | null = null;
   private workflowRefresh: Promise<void> | null = null;
+  private lastWorkflowRefreshAt = 0;
   private lastReconciledAt = 0;
   private connectionEpoch = -1;
 
@@ -107,12 +108,13 @@ export class Engine {
     this.tracker.resume();
     this.scheduler.ensureStarted();
     void this.refreshForExecution().catch(() => { /* 下一次调用/周期刷新会重试 */ });
+    this.lastWorkflowRefreshAt = Date.now();
   }
 
   /** 关停：停止提交，等待已开始的结果收集，再释放跟踪资源。关闭 DB 前须 await。 */
   async stop(): Promise<void> {
     await this.scheduler.stop();
-    await this.workflowRefresh;
+    await this.workflowRefresh?.catch(() => { /* 刷新失败不阻断 tracker 与 DB 关停 */ });
     await this.tracker.stop();
     this.lastReconciledAt = 0;
   }
@@ -328,7 +330,10 @@ export class Engine {
   private async reconcileConnection(): Promise<void> {
     // 周期刷新独立于 tick 的关键路径：不把真实 fs I/O 塞进 tick 的互斥窗口。
     // 若刷新尚未完成，本拍保持原内存代际；run/list/dry-run 入口仍会 await 最新刷新。
-    void this.refreshForExecution().catch(() => { /* 下一周期重试 */ });
+    if (Date.now() - this.lastWorkflowRefreshAt >= 3000) {
+      this.lastWorkflowRefreshAt = Date.now();
+      void this.refreshForExecution().catch(() => { /* 下一周期重试 */ });
+    }
     const stats = this.client.ws.getStats();
     if (stats.state !== "open") {
       this.lastReconciledAt = 0;

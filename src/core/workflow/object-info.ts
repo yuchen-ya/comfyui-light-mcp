@@ -70,6 +70,7 @@ export interface NormalizedNodeInfo {
   classType: string;
   required: Record<string, NormalizedInputSpec>;
   optional: Record<string, NormalizedInputSpec>;
+  hidden: Record<string, NormalizedInputSpec>;
   /** 输出类型数组（如 ["MODEL","CLIP","VAE"]），供连线上界与类型检查 */
   outputs: string[];
   /** false = 原响应未提供 output 数组，索引上界不可确认 */
@@ -213,31 +214,34 @@ export function normalizeObjectInfo(raw: Record<string, ObjectInfoNode>): Record
   const out: Record<string, NormalizedNodeInfo> = {};
   for (const [classType, node] of Object.entries(raw)) {
     if (!isPlainObject(node)) {
-      out[classType] = { classType, required: {}, optional: {}, outputs: [], outputsKnown: false, outputNode: false, malformed: true };
+      out[classType] = { classType, required: {}, optional: {}, hidden: {}, outputs: [], outputsKnown: false, outputNode: false, malformed: true };
       continue;
     }
     const input = node["input"];
     let required: Record<string, NormalizedInputSpec> = {};
     let optional: Record<string, NormalizedInputSpec> = {};
+    let hidden: Record<string, NormalizedInputSpec> = {};
     let malformed = false;
     if (isPlainObject(input)) {
       const req = normalizeInputSection(input["required"]);
       const opt = normalizeInputSection(input["optional"]);
+      const hid = normalizeInputSection(input["hidden"]);
       required = req.specs;
       optional = opt.specs;
-      malformed = req.malformed || opt.malformed;
+      hidden = hid.specs;
+      malformed = req.malformed || opt.malformed || hid.malformed;
     } else if (input !== undefined) {
       malformed = true;
     }
-    const outputs = Array.isArray(node["output"])
-      ? node["output"].filter((o): o is string => typeof o === "string")
-      : [];
+    const outputsKnown = Array.isArray(node["output"]) && node["output"].every((o) => typeof o === "string");
+    const outputs = outputsKnown ? node["output"] as string[] : [];
     const info: NormalizedNodeInfo = {
       classType,
       required,
       optional,
+      hidden,
       outputs,
-      outputsKnown: Array.isArray(node["output"]),
+      outputsKnown,
       outputNode: node["output_node"] === true
     };
     if (malformed) info.malformed = true;
@@ -351,17 +355,31 @@ export class ObjectInfoCache {
    * - 并发调用共享同一次在途请求
    */
   async get(opts?: { force?: boolean }): Promise<ObjectInfoSnapshot> {
-    const epoch = this.getEpoch();
-    if (!opts?.force && this.entry && this.isFresh(this.entry, this.now(), epoch)) {
-      return this.snapshotFrom(this.entry, "cache");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const epoch = this.getEpoch();
+      if (!opts?.force && this.entry && this.isFresh(this.entry, this.now(), epoch)) {
+        return this.snapshotFrom(this.entry, "cache");
+      }
+      if (!this.inflight) this.inflight = this.refresh(epoch);
+      const snapshot = await this.inflight;
+      // 旧连接上的在途请求不能成为新连接 epoch 的 live 验证结果。
+      if (snapshot.source !== "live" || snapshot.epoch === this.getEpoch()) return snapshot;
     }
-    if (!this.inflight) this.inflight = this.refresh(epoch);
-    const snapshot = await this.inflight;
-    // 旧连接上的在途请求不能成为新连接 epoch 的 live 验证结果。
-    if (snapshot.source === "live" && snapshot.epoch !== this.getEpoch()) {
-      return this.get({ force: true });
+    // 重连风暴必须有界：返回明确 stale/unavailable，绝不递归制造 GET 风暴。
+    if (this.entry) {
+      return {
+        ...this.snapshotFrom(this.entry, "stale"),
+        warning: "object_info 获取期间连接 epoch 持续变化，本次结果不是当前连接的实时验证"
+      };
     }
-    return snapshot;
+    return {
+      source: "unavailable",
+      nodes: null,
+      raw: null,
+      fetchedAt: 0,
+      epoch: this.getEpoch(),
+      error: "object_info 获取期间连接 epoch 持续变化，无法确认当前节点定义"
+    };
   }
 
   /** 只读窥视：返回当前缓存快照而不触发任何请求；无缓存返回 null。过期数据标记为 stale（带 warning）。 */

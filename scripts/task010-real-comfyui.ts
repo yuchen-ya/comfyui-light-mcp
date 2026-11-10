@@ -120,6 +120,7 @@ try {
   checks.push({ name: "dry_run_zero_side_effects", post_prompt: postPrompt, interrupt, database_counts: counts() });
 
   if (approveGpu) {
+    await client.start();
     const handle = await engine.runBatch({
       workflow: "solid-color",
       runs: [{ params: { color: 255, width: 64, height: 64 } }, { params: { color: 0, width: 64, height: 64 } }]

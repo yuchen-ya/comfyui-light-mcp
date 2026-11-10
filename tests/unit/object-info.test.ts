@@ -118,7 +118,8 @@ describe("normalizeObjectInfo", () => {
     expect(ks.required["seed"]).toEqual({ kind: "int", default: 0, min: 0, max: 4294967295 });
     expect(ks.required["sampler_name"]).toEqual({ kind: "combo", choices: ["euler", "ddim"] });
     expect(ks.optional["control_after_generate"]).toEqual({ kind: "combo", choices: ["fixed", "random"] });
-    expect(ks.outputs).toEqual(["LATENT"]); // 非字符串输出项被过滤
+    expect(ks.outputs).toEqual([]);
+    expect(ks.outputsKnown).toBe(false); // 非字符串输出项使索引上界不可确认，不移位
     expect(ks.outputNode).toBe(false);
     expect(nodes["SaveImage"]!.outputNode).toBe(true);
     expect(nodes["SaveImage"]!.outputs).toEqual([]);
@@ -311,6 +312,36 @@ describe("ObjectInfoCache", () => {
     const snap = await cache.get();
     expect(snap.source).toBe("stale");
     expect(snap.warning).toContain("reconnecting");
+  });
+
+  it("连接 epoch 持续抖动时有界返回 stale，不递归制造请求风暴", async () => {
+    let epoch = 0;
+    let calls = 0;
+    const cache = new ObjectInfoCache({
+      fetcher: async () => {
+        calls++;
+        epoch++;
+        return raw;
+      },
+      epoch: () => epoch
+    });
+    const snapshot = await cache.get();
+    expect(calls).toBe(3);
+    expect(snapshot.source).toBe("stale");
+    expect(snapshot.warning).toContain("持续变化");
+  });
+
+  it("hidden 输入被保留；异常输出表不错位移位", () => {
+    const normalized = normalizeObjectInfo({
+      Node: {
+        input: { required: {}, hidden: { control_after_generate: [["fixed", "randomize"], {}] } },
+        output: ["LATENT", 1],
+        output_node: false
+      }
+    });
+    expect(normalized["Node"]!.hidden["control_after_generate"]).toMatchObject({ kind: "combo", choices: ["fixed", "randomize"] });
+    expect(normalized["Node"]!.outputsKnown).toBe(false);
+    expect(normalized["Node"]!.outputs).toEqual([]);
   });
 
   it("并发去重：空缓存并发 5 次 get 只请求 1 次，全部 live", async () => {

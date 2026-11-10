@@ -47,12 +47,16 @@ export function createMcpServer(engine: Engine): McpServer {
       inputSchema: { workflow: z.string().optional().describe("可选：工作流名，返回参数详情") }
     },
     async ({ workflow }) => {
-      const result = await engine.listWorkflows(workflow);
-      if ("error" in (result as Record<string, unknown>)) {
-        const err = (result as { error: { message: string } }).error;
-        return fail(err.message);
+      try {
+        const result = await engine.listWorkflows(workflow);
+        if ("error" in (result as Record<string, unknown>)) {
+          const err = (result as { error: { message: string } }).error;
+          return fail(err.message);
+        }
+        return ok(result);
+      } catch (e) {
+        return toolError(e);
       }
-      return ok(result);
     }
   );
 

@@ -229,6 +229,18 @@ describe("Engine dry-run 零副作用与结果汇总", () => {
     expect(counts(c.db)).toEqual([0, 0, 0]);
   });
 
+  it("超长参数错误和无效工作流错误均有 200 字符上限", async () => {
+    const c = ctx!;
+    const result = await c.engine.dryRun({ workflow: "demo", runs: [{ params: { steps: "x".repeat(200_000) } }] });
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]!.message.length).toBeLessThanOrEqual(200);
+    expect(JSON.stringify(result).length).toBeLessThan(20_000);
+
+    await writeFile(path.join(c.dir, "demo.json"), "x".repeat(200_000));
+    const invalid = await c.engine.dryRun({ workflow: "demo", runs: [{ params: validParams() }] });
+    expect(invalid.errors[0]!.message.length).toBeLessThanOrEqual(200);
+  });
+
   it("热加载发现非法 JSON / UI 格式时返回预检失败，不执行旧版本", async () => {
     const c = ctx!;
     await writeFile(path.join(c.dir, "demo.json"), '{"1":');
@@ -256,6 +268,22 @@ describe("Engine dry-run 零副作用与结果汇总", () => {
     expect(result.checks.manifest_mapping).toBe("failed");
     expect(result.errors.some((e) => e.code === "MANIFEST_DEFAULT_INVALID")).toBe(true);
     expect(counts(c.db)).toEqual([0, 0, 0]);
+  });
+
+  it("关停时在途刷新失败也继续 tracker 清理，不拒绝 stop", async () => {
+    const c = ctx!;
+    const original = c.engine.registry.refresh.bind(c.engine.registry);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    c.engine.registry.refresh = async () => {
+      await gate;
+      return { loaded: [], errors: [], scanFailed: true };
+    };
+    c.engine.start();
+    const stopped = c.engine.stop();
+    release();
+    await expect(stopped).resolves.toBeUndefined();
+    c.engine.registry.refresh = original;
   });
 
   it("已有 Batch 的状态与三表计数不变，dry-run 不重启调度器", async () => {

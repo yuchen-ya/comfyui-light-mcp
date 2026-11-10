@@ -4,7 +4,7 @@
 分支：`codex/task010-workflow-preflight-hot-reload`
 开发基线：`72fdad198c88d47be911bec5d4054891aacbc325`（`main` / `origin/main`）
 
-> 状态：离线实现与回归已完成；真实 ComfyUI 0.41.0 验收因本机服务不可达而未执行。本文不把离线替身结果表述为真实环境通过。未进入 Task009，未合并主线，未发布 npm，未创建 GitHub Release。
+> 状态：离线实现、真实 ComfyUI 0.41.0 隔离验收与全量回归均已完成。未进入 Task009，未合并主线，未发布 npm，未创建 GitHub Release。
 
 ## 1. 基线与技术实现
 
@@ -150,7 +150,7 @@ Dry-run 计算函数不接收 DB、Scheduler 或提交客户端。它只接收�
 - 默认 TTL：300,000 ms。
 - 同一连接的并发首次请求共享一个 Promise。
 - WebSocket `reconnects` 作为连接 epoch；epoch 变化触发刷新。
-- 旧连接上的在途请求返回后，如果 epoch 已变，不把它作为新连接的 live 结果。
+- 旧连接上的在途请求返回后，如果 epoch 已变，最多再尝试两次；持续抖动时返回 stale/unavailable，不递归制造 GET 风暴。
 - `live`：本次 GET 成功；`cache`：未过期且 epoch 一致；`stale`：刷新失败但有旧数据；`unavailable`：无可用数据。
 - stale/unavailable 强制相关 checks 为 unknown，并返回 warning；绝不表述为实时 passed。
 - 缓存只在内存，不写磁盘。
@@ -174,7 +174,7 @@ Dry-run 计算函数不接收 DB、Scheduler 或提交客户端。它只接收�
 - `deleted`：manifest 删除或改名后的旧名 tombstone；不会作为可执行版本。
 - 最后有效版本只保留作状态诊断和既有结果关联，不用于新执行。
 
-调度 tick 的关键路径不等待真实文件 I/O，避免改变既有假时钟与恢复语义。后台刷新失败时，纯内存 `executionConfirmed()` 门控阻止本拍提交旧图。
+调度 tick 的关键路径不等待真实文件 I/O，避免改变既有假时钟与恢复语义。后台刷新每 3 秒最多发起一次；`list/run/dry-run` 调用入口仍每次检查。后台刷新失败时，纯内存 `executionConfirmed()` 门控阻止本拍提交旧图；关停时刷新失败不会阻断 tracker 清理。
 
 兼容性说明：节点 ID 现在要求 1–64 位字母数字或 `_#-`，重复 JSON 节点键由“静默取最后值”改为明确拒绝。这是本任务要求的安全收紧。
 
@@ -207,17 +207,21 @@ Dry-run 计算函数不接收 DB、Scheduler 或提交客户端。它只接收�
 
 测量期间只发生一次 `GET /object_info`，Batch/Job/Attempt 均为 0。原始结果保存在 gitignored `.analysis/task010/performance.json`；可复现脚本为 `scripts/task010-preflight-performance.ts`。
 
-未变化调用仍进行目录枚举和已知文件 stat，不重新扫描/解析所有 JSON。真实 ComfyUI 首次 object_info 获取耗时未测。
+未变化调用仍进行目录枚举和已知文件 stat，不重新扫描/解析所有 JSON。
+
+真实 ComfyUI 0.41.0 单次冷请求 `GET /object_info`：HTTP 200、1693 个节点、**660.997 ms**。该数字是单次本机测量，不是统计基准。
 
 ## 8. 离线测试结果
 
-最终全量命令：
+最终全量命令（ComfyUI 0.41.0 可达）：
 
 ```text
 npm test -- --fileParallelism=false
-Test Files  30 passed | 4 skipped (34)
-Tests       379 passed | 6 skipped (385)
+Test Files  34 passed (34)
+Tests       389 passed (389)
 ```
+
+其中 383 项为离线/替身测试，6 项为真实 e2e；无跳过。
 
 ```text
 npm run typecheck  通过
@@ -227,20 +231,34 @@ npm run build      通过
 
 新增/扩展覆盖：
 
-- `tests/unit/object-info.test.ts`：30 项。
+- `tests/unit/object-info.test.ts`：32 项。
 - `tests/unit/preflight.test.ts`：36 项。
-- `tests/unit/dry-run.test.ts`：8 项。
+- `tests/unit/dry-run.test.ts`：10 项。
 - `tests/unit/workflow-hot-reload.test.ts`：10 项。
 - `tests/unit/mcp-tools.test.ts`：四工具约束、dry_run schema、单/批量 not_submitted、零 DB/POST。
 - 既有 P4.1、恢复、幂等、调度、Task007 结果索引测试全部保留并通过。
 
-真实 e2e 的 6 项跳过不是通过；原因是 `http://127.0.0.1:8188/system_stats` 连接失败。
+审查后补充回归：epoch 连续抖动有界 stale、hidden 输入、异常输出表、200 字符错误上限、关停时在途刷新失败不阻断清理。真实 0.41.0 的 `SaveImage.input.hidden` 已确认并纳入兼容解析。
 
 ## 9. 真实 ComfyUI 测试结果
 
-**未执行。** 两轮探测默认端口均返回连接失败；常见安装目录和监听端口未发现可复用服务。没有启动未知安装、没有修改生产工作流/数据库、没有触发 GPU 生成。
+**已执行并通过。** 使用用户指定的 `E:\1Projects\ComfyUi` 与 `comfyui_stable` Python 环境，以 `127.0.0.1:8188` 启动 ComfyUI 0.41.0。未修改 ComfyUI 源码，未安装节点或模型。
 
-提供隔离补验脚本：
+真实隔离验收结果：
+
+| 项目 | 结果 |
+|---|---|
+| 真实 object_info | HTTP 200，1693 个节点；combo/hidden/output 形状已核对 |
+| 合法 solid-color dry-run | `valid=true`，六项 checks 全 passed，source=live |
+| 未注册节点 | `UNKNOWN_CLASS_TYPE`，node_id=1 |
+| 非法 combo | `INVALID_COMBO_VALUE`，node_id=4，input=sampler_name |
+| 缺失 checkpoint | `MODEL_MISSING`，node_id=3，input=ckpt_name；不返回模型清单 |
+| 修改文件后 list/dry-run | 不重启 Engine，重新识别 ready 版本 |
+| dry-run 副作用 | POST /prompt=0，interrupt=0，Batch/Job/Attempt=0，文件 hash 不变 |
+| 单个 64×64 内置节点冒烟 | `succeeded`，输出 1 个文件，仅提交 1 个生成 Job |
+| 旧 Batch 版本保护 | 第二个 pending Job 暂停 `WORKFLOW_VERSION_MISMATCH`，未生成 |
+
+复现命令：
 
 ```bash
 # 默认仅真实 object_info + dry-run + 热加载；不生成
@@ -257,14 +275,15 @@ TASK010_APPROVE_GPU_SMOKE=1 npx tsx scripts/task010-real-comfyui.ts
 - 批准开关下只提交一个实际生成 Job；第二个 Job 用于验证旧 Batch 指纹暂停，不生成。
 - 结束后清理临时目录，不读取或修改生产工作流/数据库。
 
-真实脚本已做静态检查，但因服务不可达没有运行结果，不能标记为验收通过。
+真实脚本已运行通过，结果保存在 gitignored `.analysis/task010/real-comfyui.json`。
+
+全量 `npm test` 在 ComfyUI 可达时也自动执行了仓库已有的真实 e2e：除上述 1 个 Task010 冒烟外，既有文生图与批量测试另生成 8 张测试图，写入既有 `.analysis` 测试目录。未修改生产工作流或数据库；后续离线回归使用 `tests/unit tests/http-mock tests/ws`，避免重复生成。
 
 ## 10. 未验证事项与边界
 
-1. 真实 ComfyUI 0.41.0 的 object_info 全量形状、首次网络耗时、合法/非法 dry-run、缺失模型、零 POST、热加载、正式运行与旧 Batch 保护均待补验。
-2. 未执行任何 GPU 生成；没有真实生成性能或输出质量结论。
-3. 自定义动态节点、运行时注入输入、未暴露 combo/输出表的节点只能标 unknown/warning，不能保证运行时成功。
-4. 连线类型兼容采用保守规则，不声称覆盖 ComfyUI 所有隐式转换。
-5. 文件变化检测依赖文件系统元数据；同大小且时间戳/ino 被人为保留的极端写入不属于可证明检测范围。
-6. 没有模型安装、节点安装、GUI、Redis、文件监控服务或自动修复能力。
-7. 结果索引格式、默认并发窗口、Batch/Job 状态机、安全重试语义均未改变。
+1. 自定义动态节点、运行时注入输入、未暴露 combo/输出表的节点只能标 unknown/warning，不能保证运行时成功。
+2. 连线类型兼容采用保守规则，不声称覆盖 ComfyUI 所有隐式转换。
+3. 文件变化检测依赖文件系统元数据；同大小且时间戳/ino 被人为保留的极端写入不属于可证明检测范围。配对读取能证明读取期间文件稳定，但不能证明两个独立文件在逻辑上属于同一发布版本；后续指纹对账仍会阻止旧 Batch 静默续跑。
+4. 没有模型安装、节点安装、GUI、Redis、文件监控服务或自动修复能力。
+5. 结果索引格式、默认并发窗口、Batch/Job 状态机、安全重试语义均未改变。
+6. 启动日志显示部分既有自定义节点缺少 CGAL；本任务未安装依赖，内置节点与真实验收不受影响。

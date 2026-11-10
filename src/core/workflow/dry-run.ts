@@ -5,6 +5,7 @@ import { applyParams, ParamsValidationError, validateParams } from "./mapper.js"
 import { preflightWorkflow, type PreflightIssue } from "./preflight.js";
 import type { RunSpec } from "../batch/manager.js";
 import type { WorkflowGraph } from "../client/types.js";
+import { clipTail } from "../../shared/truncate.js";
 
 export type DryRunCheckStatus = "passed" | "failed" | "unknown";
 
@@ -100,7 +101,7 @@ export function calculateDryRun(
   const pushIssue = (target: DryRunIssue[], issue: DryRunIssue, warning: boolean): void => {
     const total = warning ? ++warningTotal : ++errorTotal;
     const limit = warning ? MAX_WARNINGS : MAX_ERRORS;
-    if (target.length < limit) target.push(issue);
+    if (target.length < limit) target.push({ ...issue, message: clipTail(issue.message, 200) });
     else if (total === limit + 1) detailsTruncated = true;
   };
 
@@ -198,7 +199,7 @@ export function calculateDryRun(
       workflow_structure: finalStatus(structureFailed, structureUnknown),
       node_types: finalStatus(nodeFailed, nodeUnknown),
       manifest_mapping: finalStatus(manifestFailed, manifestUnknown),
-      parameters: finalStatus(paramsFailed, skipped > 0 && !paramsFailed),
+      parameters: paramsFailed ? "failed" : "passed",
       model_dependencies: finalStatus(modelFailed, modelUnknown)
     },
     models,
@@ -246,7 +247,7 @@ export function invalidWorkflowDryRun(
       model_dependencies: "unknown"
     },
     models: { found: 0, missing: 0, unknown: 0 },
-    errors: [{ code, message: error.message, node_id: error.node_id, input: error.input }],
+    errors: [{ code, message: clipTail(error.message, 200), node_id: error.node_id, input: error.input }],
     warnings: [],
     errors_truncated: 0,
     warnings_truncated: 0,

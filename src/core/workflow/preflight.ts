@@ -276,7 +276,7 @@ export function preflightWorkflow(input: PreflightInput): PreflightReport {
     }
 
     for (const [key, value] of Object.entries(rawInputs)) {
-      const spec = info ? (info.required[key] ?? info.optional[key] ?? null) : null;
+      const spec = info ? (info.required[key] ?? info.optional[key] ?? info.hidden[key] ?? null) : null;
       if (info && !spec) {
         collector.push({
           code: "unknown_input",
@@ -495,7 +495,7 @@ export function preflightWorkflow(input: PreflightInput): PreflightReport {
     const info = schemaAvailable ? (schema?.[classType] ?? null) : null;
     const inGraph = isRecord(node.inputs) && p.input in node.inputs;
     const spec =
-      info && !info.malformed ? (info.required[p.input] ?? info.optional[p.input] ?? null) : null;
+      info && !info.malformed ? (info.required[p.input] ?? info.optional[p.input] ?? info.hidden[p.input] ?? null) : null;
 
     if (!inGraph && !spec) {
       if (info && !info.malformed) {
