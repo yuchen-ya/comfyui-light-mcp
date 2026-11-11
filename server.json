@@ -2,12 +2,12 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.yuchen-ya/comfyui-light-mcp",
   "title": "ComfyUI Light MCP",
-  "description": "Run reviewed local ComfyUI workflows with manifests, batches and persistent job recovery.",
+  "description": "Workflow-first, Batch-native, Context-light.",
   "repository": {
     "url": "https://github.com/yuchen-ya/comfyui-light-mcp",
     "source": "github"
   },
-  "version": "0.3.0-rc.2",
+  "version": "0.3.0-rc.2.1",
   "packages": [
     {
       "registryType": "npm",
