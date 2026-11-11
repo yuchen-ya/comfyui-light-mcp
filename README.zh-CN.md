@@ -4,9 +4,13 @@
 
 本地 stdio MCP 服务器：让 AI 客户端运行你预先审核过的 ComfyUI 工作流。
 
-- **工作流优先**：从 ComfyUI 导出一次 API 格式工作流，用 manifest 声明客户端可修改的参数白名单；此后每次调用只传参数，不传完整工作流图。
-- **面向批量**：一次调用最多提交 200 个带标签的任务，支持幂等键、SQLite 持久化与中断后的保守恢复。
-- **只有 4 个工具**：`list_workflows`、`run_workflow`、`get_batch`、`get_result`。工具返回摘要与分页状态，结果写入本地 JSONL 索引文件，不在对话中返回图像数据。
+## 产品方向
+
+产品方向上，坚持 Workflow-first、Batch-native、Context-light。
+
+- **Workflow-first（工作流优先）**：从 ComfyUI 导出一次 API 格式工作流，用 manifest 声明客户端可修改的参数白名单；此后每次调用只传参数，不传完整工作流图。
+- **Batch-native（原生批量）**：一次调用最多提交 200 个带标签的任务，支持幂等键、SQLite 持久化与中断后的保守恢复。
+- **Context-light（轻量上下文）**：只提供 4 个工具，`list_workflows`、`run_workflow`、`get_batch`、`get_result`。工具返回摘要与分页状态，批次结果可写入本地 JSONL 索引文件，不在对话中返回图像数据。
 
 要求 Windows 11 x64 与 Node.js 22.12+；ComfyUI 需另行安装并保持运行。本项目不安装 ComfyUI、自定义节点或模型。
 

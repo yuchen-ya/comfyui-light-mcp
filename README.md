@@ -4,9 +4,13 @@
 
 A local stdio MCP server that lets an AI client run ComfyUI workflows you have already reviewed.
 
+## Product direction
+
+Workflow-first, Batch-native, Context-light.
+
 - **Workflow-first:** export a workflow from ComfyUI in API format once, and write a manifest that whitelists the parameters a client may change. Each call sends only those parameters, not the whole graph.
 - **Batch-native:** one call submits up to 200 labeled runs, with idempotency keys, SQLite persistence and conservative recovery after interruption.
-- **Four tools:** `list_workflows`, `run_workflow`, `get_batch`, `get_result`. Tools return summaries and paginated status; results are written to a local JSONL index instead of returning image data into the conversation.
+- **Context-light:** only four tools, `list_workflows`, `run_workflow`, `get_batch`, `get_result`. Tools return summaries and paginated status; batch results can be written to a local JSONL index without returning image data into the conversation.
 
 Requires Windows 11 x64 and Node.js 22.12+. ComfyUI must be installed and running separately. This server does not install ComfyUI, custom nodes or models.
 
