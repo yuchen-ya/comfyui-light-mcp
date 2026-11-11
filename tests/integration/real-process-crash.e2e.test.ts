@@ -12,7 +12,10 @@ import { Engine } from "../../src/core/engine.js";
 
 const url = process.env["COMFYUI_URL"] ?? "http://127.0.0.1:8188";
 let reachable = false;
-try { reachable = (await fetch(`${url}/system_stats`, { signal: AbortSignal.timeout(4000) })).ok; }
+try {
+  if (process.env["RUN_REAL_COMFYUI_TESTS"] !== "1" || !process.env["COMFYUI_URL"]) throw new Error("Real tests require explicit isolated-backend opt-in and URL");
+  reachable = (await fetch(`${url}/system_stats`, { signal: AbortSignal.timeout(4000) })).ok;
+}
 catch { /* Offline test runs explicitly skip real GPU scenarios. */ }
 
 interface CrashPoint {

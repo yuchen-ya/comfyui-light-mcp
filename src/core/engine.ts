@@ -188,23 +188,37 @@ export class Engine {
    * 提交走统一调度管线（受双窗口约束，首个 tick 同步执行以保持"立即提交"体验）。
    * 幂等命中先行（含请求指纹比对——同键不同内容 → IDEMPOTENCY_CONFLICT，离线可判）。
    */
-  async runSingle(req: { workflow: string; params: Record<string, unknown>; label?: string; idempotencyKey?: string }): Promise<RunHandleView> {
+  async runSingle(req: {
+    workflow: string;
+    params: Record<string, unknown>;
+    label?: string;
+    idempotencyKey?: string;
+    continueOnError?: boolean;
+    maxAttempts?: number;
+  }): Promise<RunHandleView> {
     await this.refreshForExecution();
     const wf = this.resolveWorkflow(req.workflow);
-    // 参数校验先于连通性检查：参数错误与 ComfyUI 在线与否无关（错误自愈优先）
-    validateParams(wf.manifest, req.params);
     if (req.idempotencyKey) {
       const existing = this.store.getBatchByIdempotencyKey(req.idempotencyKey);
       if (existing) {
-        assertIdempotencyMatch(existing, computeRequestFingerprint(wf, { runs: [{ label: req.label, params: req.params }] }));
+        assertIdempotencyMatch(existing, computeRequestFingerprint(wf, {
+          runs: [{ label: req.label, params: req.params }],
+          continueOnError: req.continueOnError,
+          maxAttempts: req.maxAttempts
+        }));
         const job = this.store.getJob(existing.id, 0);
         return { batch_id: existing.id, index: 0, status: job?.status ?? "pending" };
       }
     }
+    // Match existing keys before validating new work, just like runBatch.
+    // Parameter errors still take precedence over backend connectivity errors.
+    validateParams(wf.manifest, req.params);
     this.assertConnected();
     const created = this.manager.createBatch(wf, {
       runs: [{ label: req.label, params: req.params }],
-      idempotencyKey: req.idempotencyKey
+      idempotencyKey: req.idempotencyKey,
+      continueOnError: req.continueOnError,
+      maxAttempts: req.maxAttempts
     });
     if (!created.reused) {
       this.start();

@@ -59,6 +59,63 @@ describe("MCP 工具（内存传输）", () => {
     });
   });
 
+  it("single-run retry options persist, govern attempts and participate in idempotency", async () => {
+    await withMcp(async ({ client, engine, fake }) => {
+      fake.submitImpl = async (_graph, opts) => fake.submitCalls === 1
+        ? { ok: false, httpStatus: 400, errorBody: { type: "test_rejection" }, nodeErrors: null }
+        : { ok: true, promptId: opts!.promptId!, number: 1, nodeErrors: {} };
+      const args = {
+        workflow: "qwen-image-demo", params: { prompt: "retry fixture", seed: 7 },
+        idempotency_key: "single-options", max_attempts: 2, continue_on_error: false
+      };
+      const call = (arguments_: Record<string, unknown>) => client.callTool({ name: "run_workflow", arguments: arguments_ });
+      const run = text(await call(args) as ToolRes) as { batch_id: string };
+      engine.scheduler.stop();
+      const batch = engine.store.getBatch(run.batch_id)!;
+      expect(JSON.parse(batch.options_json)).toEqual({ continue_on_error: false, max_attempts: 2 });
+      const first = engine.store.getJob(run.batch_id, 0)!;
+      expect(first.status).toBe("failed");
+      expect(first.attempt_no).toBe(1);
+      expect((text(await call(args) as ToolRes)).batch_id).toBe(run.batch_id);
+      expect(fake.submitCalls).toBe(1);
+      for (const changed of [{ max_attempts: 3 }, { continue_on_error: true }]) {
+        const conflict = await call({ ...args, ...changed }) as ToolRes;
+        expect(conflict.isError).toBe(true);
+        expect(conflict.content[0]!.text).toContain("IDEMPOTENCY_CONFLICT");
+      }
+      await engine.scheduler.tick();
+      const second = engine.store.getJob(run.batch_id, 0)!;
+      expect(second.status).toBe("queued");
+      expect(second.attempt_no).toBe(2);
+      expect(second.prompt_id).not.toBe(first.prompt_id);
+      expect(engine.store.getAttempts(second.id)).toHaveLength(2);
+      const batchReplay = text(await call({ ...args, params: undefined, runs: [{ params: args.params }] }) as ToolRes);
+      expect(batchReplay.batch_id).toBe(run.batch_id);
+      expect(batchReplay.reused).toBe(true);
+      expect(fake.submitCalls).toBe(2);
+    });
+  });
+
+  it("single-run uncertainty never authorizes another submission even with retries enabled", async () => {
+    await withMcp(async ({ client, engine, fake }) => {
+      fake.submitImpl = async () => { throw new Error("fixture connection lost after possible acceptance"); };
+      const args = {
+        workflow: "qwen-image-demo", params: { prompt: "uncertain fixture", seed: 7 },
+        idempotency_key: "single-uncertain", max_attempts: 5
+      };
+      const run = text(await client.callTool({ name: "run_workflow", arguments: args }) as ToolRes) as { batch_id: string };
+      engine.scheduler.stop();
+      for (let i = 0; i < 3; i++) await engine.scheduler.tick();
+      const replay = text(await client.callTool({ name: "run_workflow", arguments: args }) as ToolRes);
+      expect(replay.batch_id).toBe(run.batch_id);
+      expect(replay.status).toBe("submission_unknown");
+      const job = engine.store.getJob(run.batch_id, 0)!;
+      expect(job.attempt_no).toBe(1);
+      expect(engine.store.getAttempts(job.id)).toHaveLength(1);
+      expect(fake.submitCalls).toBe(1);
+    });
+  });
+
   it("list_workflows：摘要含真实示例；未知名 → isError + 可用清单", async () => {
     await withMcp(async ({ client }) => {
       const list = text((await client.callTool({ name: "list_workflows", arguments: {} })) as never) as {

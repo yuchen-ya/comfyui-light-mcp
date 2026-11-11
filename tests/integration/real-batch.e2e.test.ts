@@ -23,6 +23,7 @@ const E2E_ROOT = path.resolve(".analysis", "e2e-batch");
 let reachable = false;
 let comfyuiVersion = "";
 try {
+  if (process.env["RUN_REAL_COMFYUI_TESTS"] !== "1" || !process.env["COMFYUI_URL"]) throw new Error("Real tests require explicit isolated-backend opt-in and URL");
   const res = await fetch(`${COMFYUI_URL}/system_stats`, { signal: AbortSignal.timeout(4000) });
   if (res.ok) {
     const j = (await res.json()) as { system?: { comfyui_version?: string } };

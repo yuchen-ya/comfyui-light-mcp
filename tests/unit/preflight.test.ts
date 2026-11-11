@@ -460,6 +460,33 @@ describe("preflight 模型依赖", () => {
 // ---------------------------------------------------------------------------
 
 describe("preflight manifest 检查", () => {
+  it("accepts the random seed default sentinel after mapping to a legal value", () => {
+    const manifest = mf([{ name: "seed", node: "5", input: "seed", type: "integer", special: "seed", default: -1 }]);
+    const report = preflightWorkflow({ graph: VALID_GRAPH, manifest, objectInfo: SCHEMA });
+    expect(report.status).toBe("passed");
+    expect(report.issues).toEqual([]);
+  });
+
+  it("still rejects ordinary negative defaults and out-of-range fixed seed defaults", () => {
+    const ordinary = mf([{ name: "seed", node: "5", input: "seed", type: "integer", default: -1 }]);
+    expect(codes(preflightWorkflow({ graph: VALID_GRAPH, manifest: ordinary, objectInfo: SCHEMA })))
+      .toContain("manifest_default_out_of_range");
+    const fixed = mf([{ name: "seed", node: "5", input: "seed", type: "integer", special: "seed", default: 100 }]);
+    const schema = clone(SCHEMA);
+    schema["KSampler"]!.required["seed"] = { kind: "int", min: 0, max: 50 };
+    expect(codes(preflightWorkflow({ graph: VALID_GRAPH, manifest: fixed, objectInfo: schema })))
+      .toContain("manifest_default_out_of_range");
+  });
+
+  it("still checks the resolved graph seed against the backend range", () => {
+    const manifest = mf([{ name: "seed", node: "5", input: "seed", type: "integer", special: "seed", default: -1 }]);
+    const graph = clone(VALID_GRAPH);
+    graph["5"]!.inputs["seed"] = -1;
+    const report = preflightWorkflow({ graph, manifest, objectInfo: SCHEMA });
+    expect(codes(report)).toContain("value_out_of_range");
+    expect(codes(report)).not.toContain("manifest_default_out_of_range");
+  });
+
   it("target 节点不存在 → manifest_target_missing", () => {
     const manifest = mf([{ name: "p", node: "404", input: "text", type: "string" }]);
     const r = preflightWorkflow({ graph: VALID_GRAPH, manifest, objectInfo: SCHEMA });

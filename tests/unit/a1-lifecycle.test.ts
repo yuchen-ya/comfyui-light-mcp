@@ -135,7 +135,7 @@ describe("A1 · 提交前持久化", () => {
     };
     expect(err.code).toBe("COMFY_REJECTED");
     expect(err.message).toContain("prompt_outputs_failed_validation");
-    // 归一化（docs/005 §七真实样本形状）
+    // 归一化（batch lifecycle contract §七真实样本形状）
     expect(err.node_errors).toEqual([
       {
         node: "7",

@@ -1,23 +1,8 @@
-# Task010：Workflow Preflight & Hot Reload
+# Workflow Preflight & Hot Reload
 
-日期：2026-11-09
-分支：`codex/task010-workflow-preflight-hot-reload`
-开发基线：`72fdad198c88d47be911bec5d4054891aacbc325`（`main` / `origin/main`）
+## 1. 模块职责
 
-> 状态：离线实现、真实 ComfyUI 0.41.0 隔离验收与全量回归均已完成。未进入 Task009，未合并主线，未发布 npm，未创建 GitHub Release。
-
-## 1. 基线与技术实现
-
-开发前确认：
-
-- P4.1 R2 的双指纹快照、提交前漂移暂停、恢复对账、安全重试已整合。
-- Task007 结果索引已在 `1b22f02` 合入；`get_result(mode="index")` 与 JSONL 格式未改变。
-- MCP 工具仍为四个：`list_workflows`、`run_workflow`、`get_batch`、`get_result`。
-- Manifest Parser、Parameter Validator、Parameter Mapper、Workflow Registry 均复用现有实现。
-- SQLite Batch / Job / Attempt 状态机、默认 `MAX_IN_FLIGHT=1` / `MAX_QUEUED_JOBS=1`、幂等与恢复语义未改。
-- 基线检查：294 个离线测试通过，6 个真实 e2e 因服务不可达跳过；typecheck/lint/build 通过。
-
-新增模块：
+模块分工：
 
 | 模块 | 职责 |
 |---|---|
@@ -190,100 +175,11 @@ Dry-run 计算函数不接收 DB、Scheduler 或提交客户端。它只接收�
 - 新 Batch 使用新 fingerprint；不会用新图静默续跑旧 Batch。
 - 幂等请求指纹仍包含工作流双指纹；热加载后同 key 不同版本按既有 `IDEMPOTENCY_CONFLICT` 处理。为保证不执行过期版本，幂等回放也会先确认当前文件有效。
 
-离线测试覆盖：旧 Batch 剩余暂停、已提交任务不受影响、新 Batch 新指纹、invalid 错误码、删除/改名、并发 refresh、修复后重载。
 
-## 7. 性能数据
-
-测量环境：Windows x64、Node.js v22.22.0；本地临时目录与本地 HTTP fixture。**不是实际 ComfyUI 0.41.0 网络性能。**
-
-| 项目 | 样本 | 结果 |
-|---|---:|---:|
-| 首次工作流加载 | 1 | 4.870 ms |
-| 未变化 list/检查 | 50 | median 0.103 ms；p95 0.230 ms；max 0.630 ms |
-| 文件变化后重载 | 1 | 1.637 ms |
-| 首次 object_info + 单 run dry-run | 1 | 12.670 ms |
-| 缓存命中单 run dry-run | 30 | median 0.386 ms；p95 1.058 ms；max 1.139 ms |
-| 20 runs dry-run | 20 | median 2.298 ms；p95 3.216 ms；max 3.216 ms |
-
-测量期间只发生一次 `GET /object_info`，Batch/Job/Attempt 均为 0。原始结果保存在 gitignored `.analysis/task010/performance.json`；可复现脚本为 `scripts/task010-preflight-performance.ts`。
-
-未变化调用仍进行目录枚举和已知文件 stat，不重新扫描/解析所有 JSON。
-
-真实 ComfyUI 0.41.0 单次冷请求 `GET /object_info`：HTTP 200、1693 个节点、**660.997 ms**。该数字是单次本机测量，不是统计基准。
-
-## 8. 离线测试结果
-
-最终全量命令（ComfyUI 0.41.0 可达）：
-
-```text
-npm test -- --fileParallelism=false
-Test Files  34 passed (34)
-Tests       389 passed (389)
-```
-
-其中 383 项为离线/替身测试，6 项为真实 e2e；无跳过。
-
-```text
-npm run typecheck  通过
-npm run lint       通过
-npm run build      通过
-```
-
-新增/扩展覆盖：
-
-- `tests/unit/object-info.test.ts`：32 项。
-- `tests/unit/preflight.test.ts`：36 项。
-- `tests/unit/dry-run.test.ts`：10 项。
-- `tests/unit/workflow-hot-reload.test.ts`：10 项。
-- `tests/unit/mcp-tools.test.ts`：四工具约束、dry_run schema、单/批量 not_submitted、零 DB/POST。
-- 既有 P4.1、恢复、幂等、调度、Task007 结果索引测试全部保留并通过。
-
-审查后补充回归：epoch 连续抖动有界 stale、hidden 输入、异常输出表、200 字符错误上限、关停时在途刷新失败不阻断清理。真实 0.41.0 的 `SaveImage.input.hidden` 已确认并纳入兼容解析。
-
-## 9. 真实 ComfyUI 测试结果
-
-**已执行并通过。** 使用用户指定的 `E:\1Projects\ComfyUi` 与 `comfyui_stable` Python 环境，以 `127.0.0.1:8188` 启动 ComfyUI 0.41.0。未修改 ComfyUI 源码，未安装节点或模型。
-
-真实隔离验收结果：
-
-| 项目 | 结果 |
-|---|---|
-| 真实 object_info | HTTP 200，1693 个节点；combo/hidden/output 形状已核对 |
-| 合法 solid-color dry-run | `valid=true`，六项 checks 全 passed，source=live |
-| 未注册节点 | `UNKNOWN_CLASS_TYPE`，node_id=1 |
-| 非法 combo | `INVALID_COMBO_VALUE`，node_id=4，input=sampler_name |
-| 缺失 checkpoint | `MODEL_MISSING`，node_id=3，input=ckpt_name；不返回模型清单 |
-| 修改文件后 list/dry-run | 不重启 Engine，重新识别 ready 版本 |
-| dry-run 副作用 | POST /prompt=0，interrupt=0，Batch/Job/Attempt=0，文件 hash 不变 |
-| 单个 64×64 内置节点冒烟 | `succeeded`，输出 1 个文件，仅提交 1 个生成 Job |
-| 旧 Batch 版本保护 | 第二个 pending Job 暂停 `WORKFLOW_VERSION_MISMATCH`，未生成 |
-
-复现命令：
-
-```bash
-# 默认仅真实 object_info + dry-run + 热加载；不生成
-npx tsx scripts/task010-real-comfyui.ts
-
-# 仅在明确批准一个 64x64 内置节点冒烟后执行
-TASK010_APPROVE_GPU_SMOKE=1 npx tsx scripts/task010-real-comfyui.ts
-```
-
-脚本特征：
-
-- 从 `examples/solid-color.*` 复制到新的临时目录，使用独立 SQLite 和输出目录。
-- 获取真实 object_info，验证合法 dry-run、非法 combo、缺失模型、热加载、零 POST/零 DB 写入。
-- 批准开关下只提交一个实际生成 Job；第二个 Job 用于验证旧 Batch 指纹暂停，不生成。
-- 结束后清理临时目录，不读取或修改生产工作流/数据库。
-
-真实脚本已运行通过，结果保存在 gitignored `.analysis/task010/real-comfyui.json`。
-
-全量 `npm test` 在 ComfyUI 可达时也自动执行了仓库已有的真实 e2e：除上述 1 个 Task010 冒烟外，既有文生图与批量测试另生成 8 张测试图，写入既有 `.analysis` 测试目录。未修改生产工作流或数据库；后续离线回归使用 `tests/unit tests/http-mock tests/ws`，避免重复生成。
-
-## 10. 未验证事项与边界
+## 7. 设计边界
 
 1. 自定义动态节点、运行时注入输入、未暴露 combo/输出表的节点只能标 unknown/warning，不能保证运行时成功。
 2. 连线类型兼容采用保守规则，不声称覆盖 ComfyUI 所有隐式转换。
 3. 文件变化检测依赖文件系统元数据；同大小且时间戳/ino 被人为保留的极端写入不属于可证明检测范围。配对读取能证明读取期间文件稳定，但不能证明两个独立文件在逻辑上属于同一发布版本；后续指纹对账仍会阻止旧 Batch 静默续跑。
 4. 没有模型安装、节点安装、GUI、Redis、文件监控服务或自动修复能力。
 5. 结果索引格式、默认并发窗口、Batch/Job 状态机、安全重试语义均未改变。
-6. 启动日志显示部分既有自定义节点缺少 CGAL；本任务未安装依赖，内置节点与真实验收不受影响。

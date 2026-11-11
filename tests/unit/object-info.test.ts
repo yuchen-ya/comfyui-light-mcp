@@ -11,7 +11,7 @@ import type { ObjectInfoNode } from "../../src/core/client/types.js";
 
 /**
  * Task 010：/object_info 缓存与兼容解析。
- * - combo 双形状（docs/003 F8）+ COMBO+options/choices + 对象形状 + 普通类型 + 自定义引用类型
+ * - combo 双形状（ComfyUI API contract F8）+ COMBO+options/choices + 对象形状 + 普通类型 + 自定义引用类型
  * - 模型输入识别
  * - 缓存 TTL / stale 降级 / epoch 失效 / 并发去重
  */
@@ -21,7 +21,7 @@ describe("normalizeInputSpec combo 形状兼容", () => {
     expect(normalizeInputSpec(["COMBO", ["euler", "ddim"]])).toEqual({ kind: "combo", choices: ["euler", "ddim"] });
   });
 
-  it("0.41 新形状 [值数组, 配置对象]（docs/003 F8）", () => {
+  it("0.41 新形状 [值数组, 配置对象]（ComfyUI API contract F8）", () => {
     expect(normalizeInputSpec([["euler", "ddim"], { tooltip: "采样器" }])).toEqual({
       kind: "combo",
       choices: ["euler", "ddim"]

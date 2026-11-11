@@ -115,7 +115,9 @@ export function createMcpServer(engine: Engine): McpServer {
           workflow,
           params: params ?? {},
           label,
-          idempotencyKey: idempotency_key
+          idempotencyKey: idempotency_key,
+          continueOnError: continue_on_error,
+          maxAttempts: max_attempts
         });
         return ok({
           ...handle,

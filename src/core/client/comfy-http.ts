@@ -16,7 +16,7 @@ import type {
 /**
  * ComfyUI HTTP 客户端（原生 fetch，无 axios）。
  * 端点清单参考 MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript (MIT) commit 765c713 的 src/api/api.ts 改编。
- * 所有响应结构以真实环境验证为准（docs/003）。
+ * 所有响应结构以真实环境验证为准（ComfyUI API contract）。
  */
 
 export interface ComfyHttpOptions {
@@ -135,7 +135,7 @@ export class ComfyHttp {
 
   /**
    * POST /interrupt —— 中断执行。
-   * docs/003 F5（已验证）：interrupt{prompt_id} 对排队任务是 no-op、不影响其他任务；
+   * ComfyUI API contract F5（已验证）：interrupt{prompt_id} 对排队任务是 no-op、不影响其他任务；
    * 取消排队任务必须走 POST /queue {delete:[id]}（deleteQueue）。
    * 不传 promptId = 中断当前执行项（ComfyUI 传统语义）。
    */

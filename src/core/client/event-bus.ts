@@ -14,7 +14,7 @@ export interface ComfyRawEvent {
 
 /**
  * 提取事件的 prompt_id。
- * 实测两种形态（docs/003）：
+ * 实测两种形态（ComfyUI API contract）：
  * - ComfyUI 0.41：{"type":"executing","data":{"node":"1","prompt_id":"..."}}  → data 内
  * - 旧版/部分广播事件：顶层 prompt_id
  */

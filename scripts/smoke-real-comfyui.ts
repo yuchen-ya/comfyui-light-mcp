@@ -17,7 +17,7 @@
  *   COMFYUI_OUTPUT_DIR=<ComfyUI 的 output 目录> 需显式传入（不默认收集本机路径），用于 S8 一致性对照
  *
  * 结果写入 .analysis/smoke-result.json（gitignored）并打印摘要。
- * 已实测环境：ComfyUI 0.41.0（详见 docs/003）。
+ * 已实测环境：ComfyUI 0.41.0（详见 ComfyUI API contract）。
  */
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -29,6 +29,9 @@ import { queueEntryPromptId } from "../src/core/client/types.js";
 import type { HistoryEntry, ObjectInfoNode, WorkflowGraph } from "../src/core/client/types.js";
 
 const COMFYUI_URL = process.env["COMFYUI_URL"] ?? "http://127.0.0.1:8188";
+if (process.env["RUN_REAL_COMFYUI_TESTS"] !== "1" || !process.env["COMFYUI_URL"]) {
+  throw new Error("Set RUN_REAL_COMFYUI_TESTS=1 and an explicit COMFYUI_URL for an isolated test backend; smoke can submit and interrupt jobs.");
+}
 const COMFYUI_OUTPUT_DIR = process.env["COMFYUI_OUTPUT_DIR"] ?? "";
 const RESULT_FILE = path.resolve(".analysis", "smoke-result.json");
 
@@ -86,7 +89,7 @@ function sleep(ms: number): Promise<void> {
 function comboValues(node: ObjectInfoNode, key: string): string[] {
   const spec = node.input?.required?.[key] as unknown;
   if (!Array.isArray(spec)) return [];
-  // 实测两种 combo 规格（docs/003）：旧版 [类型名, 值数组]；0.41 [值数组, 配置对象]
+  // 实测两种 combo 规格（ComfyUI API contract）：旧版 [类型名, 值数组]；0.41 [值数组, 配置对象]
   if (Array.isArray(spec[0])) return spec[0].filter((v): v is string => typeof v === "string");
   if (Array.isArray(spec[1])) return spec[1].filter((v): v is string => typeof v === "string");
   return [];
@@ -301,7 +304,7 @@ async function main(): Promise<void> {
     const aStillRunning =
       eventFor(a).some((e) => e["type"] === "progress" || e["type"] === "progress_state" || e["type"] === "executing") && aNotHurt;
 
-    // 2) 真实语义（docs/003 F5 修正）：interrupt 对排队任务是 no-op——B 应仍在队列；
+    // 2) 真实语义（ComfyUI API contract F5 修正）：interrupt 对排队任务是 no-op——B 应仍在队列；
     //    取消排队任务的正确方式是 POST /queue {delete:[b]}，此处验证之
     let queueDeleteWorked: boolean | null = null;
     const queuedInterruptIsNoop = !bRemovedFromQueue; // B 仍在队列 = interrupt(排队) 为 no-op

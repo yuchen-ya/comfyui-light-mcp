@@ -33,6 +33,28 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ COMFYUI_URL: "not-a-url" })).toThrow(ConfigError);
   });
 
+  it.each([
+    "http://", "http://example.invalid:99999", "http:///", "https://example.invalid\\other",
+    "http://demo-user:demo-secret@example.invalid", "http://example.invalid?token=demo-secret",
+    "http://example.invalid#demo-secret", "http://example.invalid?", "http://example.invalid#",
+    " https://example.invalid", "http://example.invalid/has space"
+  ])("invalid endpoints are rejected without echoing input (%#)", (value) => {
+    try {
+      loadConfig({ COMFYUI_URL: value });
+      expect.unreachable("invalid endpoint accepted");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError);
+      expect(String(error)).not.toContain(value);
+      expect(String(error)).not.toContain("demo-secret");
+      expect(String(error)).not.toContain("demo-user");
+    }
+  });
+
+  it("normalizes HTTP(S) and preserves proxy prefixes and IPv6", () => {
+    expect(loadConfig({ COMFYUI_URL: "HTTPS://example.invalid/comfy/" }).comfyUiUrl).toBe("https://example.invalid/comfy");
+    expect(loadConfig({ COMFYUI_URL: "http://[::1]:8188/comfy/" }).comfyUiUrl).toBe("http://[::1]:8188/comfy");
+  });
+
   it("maxQueuedJobs > maxInFlight 拒绝（双窗口约束）", () => {
     expect(() => loadConfig({ MAX_IN_FLIGHT: "1", MAX_QUEUED_JOBS: "2" })).toThrow(/不能大于/);
   });

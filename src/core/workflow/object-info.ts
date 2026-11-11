@@ -4,7 +4,7 @@ import type { ObjectInfoNode } from "../client/types.js";
  * /object_info 缓存与规范化（Task 010）：
  * - ObjectInfoCache：TTL 缓存 + 并发去重 + 连接 epoch 失效 + 降级语义（live/cache/stale/unavailable）。
  *   绝不把 stale 当 live：刷新失败只能返回 source=stale 并带 warning；无任何数据返回 source=unavailable。
- * - normalizeObjectInfo / normalizeInputSpec：多形状兼容的输入规格规范化（docs/003 F8 combo 双形状等）。
+ * - normalizeObjectInfo / normalizeInputSpec：多形状兼容的输入规格规范化（ComfyUI API contract F8 combo 双形状等）。
  * - classifyModelInput：模型文件输入识别（ckpt/lora/vae/upscale/controlnet/unet/clip 等明确可识别项）。
  * 纯内存模块：自身不发请求（fetcher 注入）、不落盘、不依赖 DB。
  */
@@ -160,7 +160,7 @@ function specFromTypeName(typeName: string, opts: Record<string, unknown>): Norm
 
 /**
  * 单个输入规格规范化，兼容形状：
- * - 旧 combo：["COMBO" | 类型名, [值...]]（docs/003 F8 旧版）
+ * - 旧 combo：["COMBO" | 类型名, [值...]]（ComfyUI API contract F8 旧版）
  * - 0.41 combo：[[值...], {tooltip/options}]（值在 spec[0]）
  * - COMBO + options/choices：["COMBO", {options:{choices:[...]}} | {choices:[...]} | {combo:{...}}]
  * - 对象形状：{type:"COMBO", options:{choices:[...]}} / {type:"combo", choices:[...]}

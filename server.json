@@ -1,0 +1,84 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.yuchen-ya/comfyui-light-mcp",
+  "title": "ComfyUI Light MCP",
+  "description": "Run reviewed local ComfyUI workflows with manifests, batches and persistent job recovery.",
+  "repository": {
+    "url": "https://github.com/yuchen-ya/comfyui-light-mcp",
+    "source": "github"
+  },
+  "version": "0.3.0-rc.2",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "comfyui-light-mcp",
+      "version": "0.3.0-rc.2",
+      "runtimeHint": "npx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--package",
+          "value": "comfyui-light-mcp@0.3.0-rc.2"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "COMFYUI_URL",
+          "description": "Required installation choice: your trusted running ComfyUI HTTP(S) endpoint. No credentials, query or fragment.",
+          "isRequired": true,
+          "format": "string",
+          "placeholder": "http://127.0.0.1:8188"
+        },
+        {
+          "name": "WORKFLOWS_DIR",
+          "description": "Required absolute existing directory containing your reviewed workflow API JSON and manifest pairs.",
+          "isRequired": true,
+          "format": "filepath",
+          "placeholder": "C:/mcp/workflows"
+        },
+        {
+          "name": "DATA_DIR",
+          "description": "Required absolute writable SQLite state directory. Use a separate directory per MCP process.",
+          "isRequired": true,
+          "format": "filepath",
+          "placeholder": "C:/mcp/data"
+        },
+        {
+          "name": "OUTPUT_DIR",
+          "description": "Required absolute writable output/download/index directory.",
+          "isRequired": true,
+          "format": "filepath",
+          "placeholder": "C:/mcp/output"
+        },
+        {
+          "name": "AUTO_SAVE_OUTPUTS",
+          "description": "Application default: true. Download outputs on completion; false defers downloads to result queries.",
+          "format": "boolean",
+          "default": "true"
+        },
+        {
+          "name": "MAX_IN_FLIGHT",
+          "description": "Application default: 1. Integer 1-64; includes uncertain submissions.",
+          "format": "number",
+          "default": "1"
+        },
+        {
+          "name": "MAX_QUEUED_JOBS",
+          "description": "Application default: 1. Integer 1-64, no greater than MAX_IN_FLIGHT.",
+          "format": "number",
+          "default": "1"
+        },
+        {
+          "name": "JOB_TIMEOUT_MS",
+          "description": "Application default: 600000. Integer 10000-86400000 milliseconds.",
+          "format": "number",
+          "default": "600000"
+        }
+      ]
+    }
+  ]
+}

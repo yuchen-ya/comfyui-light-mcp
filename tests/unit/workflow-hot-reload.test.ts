@@ -183,6 +183,25 @@ describe("Engine 热加载与版本保护", () => {
     expect(db!.prepare("SELECT count(*) AS n FROM jobs").get()).toEqual({ n: 0 });
   });
 
+  it("single and batch replays report fingerprint conflict before changed-manifest parameter errors", async () => {
+    await putPair();
+    const fake = makeEngine();
+    await engine!.loadWorkflowsAsync();
+    const request = { workflow: "demo", params: { prompt: "original" }, idempotencyKey: "changed-manifest" };
+    const original = await engine!.runSingle(request);
+    await engine!.stop();
+    const changed = manifest(2);
+    changed.params[0]!.name = "renamed_prompt";
+    await writeFile(path.join(dir, "demo.manifest.json"), JSON.stringify(changed));
+    await expect(engine!.runSingle(request)).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    await expect(engine!.runBatch({
+      workflow: request.workflow, runs: [{ params: request.params }], idempotencyKey: request.idempotencyKey
+    })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect(fake.state.submitCalls).toBe(1);
+    expect(engine!.store.getAttempts(engine!.store.getJob(original.batch_id, 0)!.id)).toHaveLength(1);
+    expect(db!.prepare("SELECT count(*) AS n FROM batches").get()).toEqual({ n: 1 });
+  });
+
   it("无效文件暂停旧 Batch 时使用 WORKFLOW_INVALID，不误报版本漂移", async () => {
     await putPair();
     const fake = makeEngine();

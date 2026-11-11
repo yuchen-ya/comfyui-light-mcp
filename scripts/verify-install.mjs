@@ -118,6 +118,35 @@ try {
   assert.deepEqual(tools.map(tool => tool.name).sort(), ["get_batch", "get_result", "list_workflows", "run_workflow"]);
   const workflows = await session.call("list_workflows", {});
   assert.deepEqual(workflows.workflows.map(workflow => workflow.name), ["solid-color"]);
+  const preflight = await session.call("run_workflow", { workflow: "solid-color", dry_run: true, params: { color: 255 } });
+  assert.equal(preflight.valid, true);
+  assert.equal(preflight.submission, "not_submitted");
+  assert.equal(preflight.validation_sources.node_schema.source, "live");
+  const invalidPreflight = await session.call("run_workflow", { workflow: "solid-color", dry_run: true, params: { color: -1 } });
+  assert.equal(invalidPreflight.valid, false);
+  const manifestPath = path.join(runDir, "workflows/solid-color.manifest.json");
+  const originalManifest = await readFile(manifestPath, "utf8");
+  const manifest = JSON.parse(originalManifest);
+  await writeFile(manifestPath, JSON.stringify({ ...manifest, version: manifest.version + 1 }));
+  const refreshed = await session.call("list_workflows", { workflow: "solid-color" });
+  assert.equal(refreshed.version, manifest.version + 1);
+  assert.equal(refreshed.status, "ready");
+  await writeFile(manifestPath, "{invalid JSON");
+  assert.equal((await session.call("list_workflows", { workflow: "solid-color" })).status, "invalid");
+  const blocked = await session.rpc("tools/call", {
+    name: "run_workflow", arguments: { workflow: "solid-color", params: { color: 255 } }
+  });
+  assert.equal(blocked.isError, true);
+  await writeFile(manifestPath, originalManifest);
+  assert.equal((await session.call("list_workflows", { workflow: "solid-color" })).version, manifest.version);
+  const untouched = new Database(path.join(runDir, "data/comfyui-light.db"), { readonly: true });
+  try {
+    for (const table of ["batches", "jobs", "job_attempts"]) {
+      assert.equal(untouched.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 0);
+    }
+  } finally {
+    untouched.close();
+  }
   const waitForBatch = async id => {
     const deadline = Date.now() + 60_000;
     for (;;) {
@@ -218,6 +247,8 @@ const report = {
   package_version: metadata.version, node: process.version, platform: process.platform, arch: process.arch,
   comfyui_version: backend.system.comfyui_version, native_sqlite: "passed", stdio_tools: 4,
   single_succeeded: 1, batch_succeeded: 2, batch_invalid: 1, jsonl_rows: 3,
+  live_preflight: "passed", invalid_preflight: "rejected", hot_reload_without_restart: "passed",
+  invalid_edit_blocks_submission: true, preflight_and_reload_state_writes: 0,
   single_missing_file_recovered: true, download_false_preserves_missing_file: true,
   all_invalid_batch: { status: "failed", invalid: 2, complete: true, reused: true },
   persisted_batches: 3, persisted_jobs: 6, attempts_before_and_after_restart: 3,

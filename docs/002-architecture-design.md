@@ -1,4 +1,6 @@
-# 002 · 目标架构与实施设计
+# 架构与接口设计
+
+本文保留模块划分、状态与接口设计。当前公开用法以[使用指南](usage.zh-CN.md)为准，预检与热加载细节见[功能设计](010-workflow-preflight-hot-reload.md)。
 
 > Task 001 交付 4–9：目录结构、核心接口、Batch/Job 模型与生命周期、工具 Schema、风险与待确认问题、分阶段计划。
 > 前置结论（见 `001-codebase-audit.md`）：以 metabrain-mcp（MIT）为代码底座做选择性复用；comfy-org-mcp（AGPL）仅吸收设计思想，**零代码复制**；ComfyUI 消费面由本项目**直连 REST + WS 自研**——这是轻量版存在的理由。
@@ -80,7 +82,7 @@ comfyui-light-mcp/
 │  └─ smoke-real-comfyui.ts     # 真实环境冒烟：验证全部未验证假设（Phase 1）
 ├─ tests/
 │  ├─ unit/
-│  └─ integration/              # 对本机真实 ComfyUI 的端到端验收
+│  └─ integration/              # 隔离 ComfyUI 后端的端到端集成测试
 ├─ docs/
 ├─ LICENSE                      # MIT
 ├─ AGENTS.md
@@ -200,7 +202,7 @@ export interface ParameterMapper {
 
 启动交叉校验（registry.load）：manifest 引用的 `node` 在 API JSON 中存在、`input` 在该节点 `inputs` 中存在、类型与当前值相容、enum 值合法——任何失配即拒绝注册该工作流并进 LoadReport（防 manifest 与工作流漂移，审计 §风险 8）。
 
-### 4.3 Batch / Job / Scheduler（Task 004 已按此实现）
+### 4.3 Batch / Job / Scheduler
 
 ```ts
 // core/batch/manager.ts（已实现）
@@ -240,7 +242,7 @@ export class Scheduler {
 }
 ```
 
-### 4.4 Storage 与 Engine facade（Task 004 已按此实现）
+### 4.4 Storage 与 Engine facade
 
 ```ts
 // core/storage/*：同步 better-sqlite3，WAL 模式；迁移 v1→v2（v2 增调度热路径部分索引）
@@ -263,7 +265,7 @@ export class Engine {
 
 - **工作流文件**：ComfyUI 原生导出的 **API 格式 JSON**（用户已测试过的即用），命名 `foo-api.json`，**Agent 永远拿不到修改整图的能力**。
 - **manifest 文件**：`foo.manifest.json`，与工作流文件同目录成对存在。显式声明 Agent 可改的参数白名单（类型/默认/枚举/范围/seed 语义）。`workflows/examples/` 提供完整示例。
-- **default 语义（Task 004 §二.4 明确）**：参数显式提供 → 用提供值；未提供但 manifest 有 default → 用 default 值；两者皆无 → 保留工作流模板原值。`resolved_json` 记录全部 manifest 参数的实际生效值（含模板原值），保证可复现。
+- **default 语义**：参数显式提供 → 用提供值；未提供但 manifest 有 default → 用 default 值；两者皆无 → 保留工作流模板原值。`resolved_json` 记录全部 manifest 参数的实际生效值（含模板原值），保证可复现。
 - **default 完整校验（P4.1）**：加载时校验 default 自身满足声明约束（类型/min/max/step 对齐/enum 合法值/seed 规则——-1 哨兵或值域内整数）；非法 manifest 整体拒绝注册并进 LoadReport（错误精确到参数与原因）。
 - 禁止项落实为机制：`run_workflow` 的参数只经 manifest 白名单校验后定点覆写（mapper），不存在"提交任意 JSON"通道（metabrain 的 `queue_custom_prompt` 不移植）。
 - manifest 手写成本控制：提供 `scripts/` 下的 manifest 生成辅助（Phase 2 可选：从 API JSON 列出候选节点/输入供人挑选），**不做自动全量参数暴露**（metabrain 教训：`=>` 节点全输入暴露 + typeof 四类推断不可靠，审计 §1.2）。
@@ -317,14 +319,14 @@ CREATE INDEX idx_jobs_recover ON jobs(status)
   WHERE status IN ('submitting','submission_unknown','queued','executing');   -- 部分索引，恢复扫描
 ```
 
-**迁移 v2（Task 004）**：调度器热路径部分索引（无新列；幂等键复用 v1 的 UNIQUE 约束）：
+**迁移 v2**：调度器热路径部分索引（无新列；幂等键复用 v1 的 UNIQUE 约束）：
 
 ```sql
 CREATE INDEX idx_jobs_pending   ON jobs(batch_id, idx) WHERE status = 'pending';
 CREATE INDEX idx_jobs_retryable ON jobs(batch_id, idx) WHERE status IN ('failed','timeout');
 ```
 
-**迁移 v3（Task 005 / P4.1）**：工作流版本保护 + 幂等请求指纹（batches 三新列，job 级不复制 workflow JSON）：
+**迁移 v3**：工作流版本保护 + 幂等请求指纹（batches 三新列，job 级不复制 workflow JSON）：
 
 ```sql
 ALTER TABLE batches ADD COLUMN manifest_fingerprint TEXT;  -- batch 创建时 manifest 内容指纹（canonical sha256）
@@ -336,7 +338,7 @@ ALTER TABLE batches ADD COLUMN request_fingerprint TEXT;   -- 批量请求内容
 - v2 旧库迁移上行三列为 NULL：未执行任务暂停为 LEGACY_SNAPSHOT_MISSING；旧幂等键返回 LEGACY_IDEMPOTENCY_CONFLICT，不伪称请求内容已验证。
 - `request_fingerprint` 覆盖：workflow name / manifest version / 双内容指纹 / runs 内容及顺序 / continue_on_error / max_attempts（含钳制归一化）。
 
-**迁移 v4（Task005R）**：同一事务检测 v3 实际列结构、执行 DDL/数据修正并更新 user_version=4。保留 4.1 的短列名 raw-text 指纹，不改认成 canonical 指纹；补长列且保持 NULL，暂停缺快照的 pending。4.1new 的 canonical 指纹保留。在 job_attempts 增加 deadline_at、cancel_requested_at、success_observed_at、terminal_confirmed；运行中旧 failed/timeout 无远端确认时转 unknown，已结束 batch 保持可查询。分支评测及回退使用独立 DATA_DIR，保留升级前备份，禁止删除用户数据库来消除列冲突。
+**迁移 v4**：同一事务检测 v3 实际列结构、执行 DDL/数据修正并更新 user_version=4。保留 4.1 的短列名 raw-text 指纹，不改认成 canonical 指纹；补长列且保持 NULL，暂停缺快照的 pending。4.1new 的 canonical 指纹保留。在 job_attempts 增加 deadline_at、cancel_requested_at、success_observed_at、terminal_confirmed；运行中旧 failed/timeout 无远端确认时转 unknown，已结束 batch 保持可查询。分支评测及回退使用独立 DATA_DIR，保留升级前备份，禁止删除用户数据库来消除列冲突。
 
 ### 6.2 状态机
 
@@ -348,8 +350,7 @@ Job:   pending ─→ submitting ─→ queued ─→ executing ─┬→ succee
           │ │          │            │        │        └→ paused     ─(工作流指纹还原)→ pending（P4.1）
           │ │          ↓            ↓        ↓
           │ │    submission_unknown ─┬→ (恢复时在 /queue 或 /history 中找到) → queued/executing/终态，继续跟踪
-          │ │                        └→ (两处均无) → **保持 submission_unknown**（Task 003 A1 确认：
-          │ │                           不伪装 failed、不自动重提；get_batch 原样区分；batch 视为未决=running）
+          │ │                        └→ (两处均无) → **保持 submission_unknown**
           │ └─(WORKFLOW_VERSION_MISMATCH，P4.1)→ paused（终态前可逆：指纹还原后调度器解除）
           └→ invalid（参数校验失败，创建时即定，终态，不占提交窗口）
         （提交抛错/网络失败）（/queue 中）（WS executing）（终态；WS/history 可信终态证据）
@@ -382,16 +383,16 @@ Batch: running ─┬→ completed   （全部 succeeded）
 - **工作流版本保护（P4.1 已实现）**：batch 创建时快照 `workflow_version + manifest_fingerprint + graph_fingerprint`（v3 列）；恢复与每 tick 提交前比对当前注册工作流指纹。漂移 → 该 batch 剩余 pending 转 `paused`（error=WORKFLOW_VERSION_MISMATCH，含差异明细），**绝不静默用新版本续跑旧 batch**；其他 batch 不受影响；已提交的在途 job 照常定终态（旧图已在 ComfyUI 侧）。工作流内容还原（指纹恢复一致）→ 调度器自动解除暂停续跑。旧行缺少任一指纹 → LEGACY_SNAPSHOT_MISSING 暂停；不得把当前文件回填为历史快照。
 - **Manifest default 完整校验（P4.1 已实现）**：default 必须自身满足声明的全部约束——类型正确（string/number/integer/boolean/enum）、min/max 满足、step 对齐（相对 min）、enum default 须在合法值内、seed 的 default 与显式输入共用同一规则：-1 为随机哨兵，普通值及随机结果限于声明范围与 [0, 0xffffffff] 的交集内整数；seed 不应用 step。非法 manifest **整体拒绝注册**并进 LoadReport（精确到参数与原因）。
 - **重试（已实现）**：仅对远端确认终止（terminal_confirmed=1）的 `failed/timeout` 且 `attempt_no < max_attempts`（默认 1 即不重试，上限 5；`submission_unknown` 永不自动重试）。每次尝试全新 prompt_id + 独立 `job_attempts` 行，历史只增不改；重试未用尽期间 batch 视为未决（保持 running）。
-- **submission_unknown（Task 003 A1 最终语义，已实测落地）**：`submitting` 态遇网络失败/进程崩溃 → 入 `submission_unknown`。**prompt_id 在提交动作之前已持久化**（runner 固定顺序：生 id → 事务落库（含 attempt 行）→ POST），因此恢复时总是可查证。恢复判定：能查到（`/queue` 或 `/history/{prompt_id}`）→ 继续跟踪或定终态；**两处皆无 → 保持 submission_unknown 状态原样**——不伪装成 failed、不自动重提（0.41 实测同 prompt_id 重提会重复执行，docs/003 F2）、get_batch 单列 `unknown` 统计、batch 状态视为未决（保持 running）、**持续占用 MAX_IN_FLIGHT 在途额度**（它可能仍在远端执行——窗口层落实"宁可保留 unknown 也不重复生成"）。
-- **timeout（Task005R）**：claim 事务在 POST 前持久化 deadline_at；恢复按原始 deadline 计时。超时先事务写 cancel_requested_at，再发送 queue delete + 定向 interrupt。RPC 失败、响应丢失或仅返回 HTTP 200 均不足以证明远端停止：保持 submission_unknown/TIMEOUT_UNCONFIRMED，继续占额和对账。当前 attempt 的中断证据到达后才事务结算 timeout；用户/外部中断无本地意图则 cancelled。success 已观察但 history 暂不可用时保留 success_observed_at/RESULT_PENDING，重试查询，不重跑生成。
-- **History 终态判定（Task005R）**：ComfyUI 0.41.0 的 status_str 为 success/error，中断记录在 messages.execution_interrupted；真实执行异常为 execution_error。先识别终态消息，再识别明确成功；部分 outputs 不证明成功。恢复、WS、轮询共享单次异步结算入口，终态 job/attempt/batch 在同一事务更新，并检查 attempt_no/prompt_id 防止迟到写回。
+- **submission_unknown**：`submitting` 遇网络失败或进程崩溃时进入该状态。`prompt_id` 在 POST 前已持久化。恢复按 `/queue` 与 `/history/{prompt_id}` 对账；能查到则继续跟踪或确认终态，两处皆无则继续保持 unknown，不伪装成 failed、不自动重提。客户端指定的 prompt_id 不是后端去重保证。
+- **timeout**：claim 事务在 POST 前持久化 deadline_at；恢复按原始 deadline 计时。超时先事务写 cancel_requested_at，再发送 queue delete + 定向 interrupt。RPC 失败、响应丢失或仅返回 HTTP 200 均不足以证明远端停止：保持 submission_unknown/TIMEOUT_UNCONFIRMED，继续占额和对账。当前 attempt 的中断证据到达后才事务结算 timeout；用户/外部中断无本地意图则 cancelled。success 已观察但 history 暂不可用时保留 success_observed_at/RESULT_PENDING，重试查询，不重跑生成。
+- **History 终态判定**：ComfyUI 0.41.0 的 status_str 为 success/error，中断记录在 messages.execution_interrupted；真实执行异常为 execution_error。先识别终态消息，再识别明确成功；部分 outputs 不证明成功。恢复、WS、轮询共享单次异步结算入口，终态 job/attempt/batch 在同一事务更新，并检查 attempt_no/prompt_id 防止迟到写回。
 - **幂等性（已实现；P4.1 加固为内容感知）**：
   - batch 级：`idempotency_key` 唯一约束 + **请求内容指纹比对**（P4.1）。同键重放：内容一致（canonical JSON，参数键序无关）→ 返回既有 batch（不建新行、不产生新提交）；**内容不同 → `IDEMPOTENCY_CONFLICT`**（含既有/本次指纹短前缀，须换新键），既有 batch 不受影响。并发 UNIQUE 竞争路径同样先比对指纹再决定命中/冲突。指纹覆盖 workflow name / manifest version / 双内容指纹 / runs 内容及顺序 / continue_on_error / max_attempts（钳制归一化）。旧行缺请求指纹 → LEGACY_IDEMPOTENCY_CONFLICT；可按 batch_id 查询，不能承诺内容一致。
   - job 级：`(batch_id, idx)` 唯一；`submission_unknown` 查证流程见上，不做盲目双提交。
 - **结果关联**：`executed` 事件 + `/history/{prompt_id}` 双通道收获 outputs（images/gifs/音频均收，metabrain 只认 images，审计 §1.3），统一转 `OutputRef{filename, subfolder, type, kind}` 落库。
 - **输出落盘（已确认决策，Task 004 完成按需下载）**：`AUTO_SAVE_OUTPUTS=true`（默认）时 job 终态成功即经 `/view` 下载到 `OUTPUT_DIR/<batch_id>/<idx>/<filename>`（重名自动加序号），`OutputRef.local_path` 记录绝对路径；false 时结算只存引用（kind+filename），`get_result(download=true)`（默认）按需下载并持久化（幂等，`download:false` 只读引用）。
 - **分页**：`get_batch` 按 `(batch_id, idx)` 排序，`limit`（默认 20，上限 100）+ `offset`；v1 用 offset（SQLite 窗口查询），规模到万级再评估 cursor。
-- **重启恢复**（`recovery.ts`，连通/重连时先串行恢复，周期继续查证 unknown；A1 语义 + P4.1 加固均已实现并测试）：
+- **重启恢复**（`recovery.ts`，连通/重连时先串行恢复，周期继续查证 unknown；遵循先对账、后调度的恢复规则）：
   1. 扫部分索引得存量在途 job（含 `submission_unknown`）；
   2. 有 prompt_id：交给 Tracker 的统一异步入口，先查 history 终态，再查 queue 挂接；成功查询但两处无记录保持 unknown。查询失败保留原状态并报告 RECONCILIATION_FAILED，不能声称两处无记录。中断按持久化取消意图区分 timeout/cancelled；输出收集并发去重，下载失败只重试下载。
   3. 无 `prompt_id` → 保守置 `submission_unknown` 同上款（runner 顺序保证实际不会发生）；
@@ -422,7 +423,7 @@ Batch: running ─┬→ completed   （全部 succeeded）
 ```
 
 返回：单 params → `{batch_id, index: 0, status, next: get_result(...)}`；runs → `{batch_id, total, invalid, reused, status, next: get_batch(...)}`。**部分容错**：runs 下单 run 参数错误记 invalid job（明细 get_batch(status=invalid)），合法 run 照常提交；单 params 简写参数错误 → 整体 isError（P2 语义不变）。
-草案中的 `dry_run / wait / max_retries / timeout_ms` **未实现**（dry_run 可由 list_workflows 参数表 + 本地校验替代；wait 与 MCP 客户端超时冲突；重试/超时以 batch 级 options 落地）——如后续需要再立项，不占当前接口。
+`dry_run` 提供只读预检，见[预检设计](010-workflow-preflight-hot-reload.md)。`wait`、`max_retries`、`timeout_ms` 不在当前提交接口中；重试与超时使用批次选项和全局配置。
 
 ### get_batch（已实现；stats 含 unknown/paused 单列）
 
@@ -452,40 +453,3 @@ Batch: running ─┬→ completed   （全部 succeeded）
 3. 一切错误消息 clip（默认 200 字符）+ `...` 显式截断标记；空值渲染 `<empty>` 不省略字段。
 4. 输出默认**本地绝对路径**引用（AUTO_SAVE 落盘），绝不 base64；`/view` URL 仅在显式要求时附带；批量结果只回计数，明细按页取。
 5. 校验错误带期望值与修正示例（如 enum 全列），让 Agent 一次自愈。
-
-## 9. 技术风险与待确认问题
-
-> 按工作原则，以下均标注验证方式；**Q1/Q2 为 Phase 1 冒烟脚本的第一批验证目标**。
-
-| # | 问题 | 状态 | 验证/缓解 |
-|---|---|---|---|
-| Q1 | ComfyUI API 细节随版本变动：`POST /prompt` 是否接受客户端指定 `prompt_id`（幂等关键，含**同 prompt_id 重复提交的行为**）；`/interrupt` 是否支持按 `prompt_id`（否则只能中断当前执行项）；`node_errors` 结构；`/history` outputs 的 gifs/audio 形状 | **已验证（0.41.0 实测，docs/003；node_errors 非空样本 Task 004 补验，docs/005 §七）**：指定 id 接受且回显；**同 id 重提会重复执行（无去重）→ 禁止盲目重提**；interrupt 按 id 对排队态是 no-op（F5 修正）；非法 combo 值 → HTTP 400 + `{nodeId: {errors:[{type, message, details, extra_info}], class_type, dependent_outputs}}`，无 prompt_id 回显、无执行事件；gifs/audio 本环境未出现 |
-| Q2 | ComfyUI history 服务端保留窗口有限 → 重启恢复可能查不到 | 部分验证：history 可完整判定成功/失败/中断终态（docs/003 F6）；保留窗口上限仍未测 | P3 恢复逻辑按 `/queue`+`/history` 双查 + 不重提兜底实现 |
-| Q3 | better-sqlite3 在本机（win32-x64, Node 22.22）预编译安装 | 未验证 | Phase 0 `npm install` 即验；失败则评估 `node:sqlite`（Node 22 需 `--experimental-sqlite`，不适合客户端拉起，需升 Node ≥24——列为 Plan B） |
-| Q4 | MCP 客户端对工具调用超时各异（部分 60s） | 未验证 | 默认异步返回 batch_id（wait=false），规避长阻塞；wait=true 文档标注仅小批量 |
-| Q5 | WS 单连接承载所有 job 事件，高并发批量下事件风暴 | 设计内 | 事件按 prompt_id 分发 + 落库后再响应；progress 事件默认不落库只更新内存 |
-| Q6 | manifest 与工作流文件漂移（用户改图后引用失效） | 设计内 | registry 启动交叉校验，失配拒注册并报告精确 node/input |
-| Q7 | Windows 路径越狱（`..`、绝对路径、盘符、UNC） | 设计内 | path-jail：resolve 后前缀校验 + 拒绝 UNC/盘符；单测覆盖向量清单 |
-| Q8 | MCP SDK 1.x API 变动 | 外部 | 锁次版本；升级单独小 PR |
-| Q9 | metabrain 代码复用的 MIT 归属 | 流程 | 拷贝实质性片段的文件头保留其版权声明 + NOTICE 汇总 |
-| Q10 | 长视频工作流单 job 数十分钟，get_batch 轮询间隔无引导 | 设计内 | instructions 给出轮询节奏建议；后续可加 progress 汇总字段 |
-
-## 10. 分阶段实施计划
-
-> 每阶段以**本机真实 ComfyUI 可运行性**为验收标准；不并行扩张功能面。
-
-| 阶段 | 内容 | 验收 | 预估 |
-|---|---|---|---|
-| **P0 脚手架** | 目录骨架、tsconfig/eslint/vitest、LICENSE(MIT)、better-sqlite3 安装验证（Q3）、config 模块 | build+单测绿；依赖装得上 | 0.5d | ✅ |
-| **P1 Client+总线** | comfy-http/comfy-ws/event-bus、重连、二进制帧跳过；`smoke-real-comfyui.ts` 验证 Q1/Q2 全部假设 | 冒烟脚本对本机 ComfyUI 提交→等完→收 outputs 全通 | 1–2d | ✅（11/11，docs/003） |
-| **P2 工作流+MVP** | registry/manifest/mapper + `list_workflows`/`run_workflow`(runs 长度 1)/`get_result`（不落盘）；examples 工作流对 | Agent 经 3 工具端到端出 1 张图 | 2–3d | ✅（115 测试 + 真实 e2e + Inspector，docs/004） |
-| **P3 Batch/Job** | BatchManager/Scheduler 双窗口、get_batch、失败隔离、重试、幂等键、P2 遗留修复（终态优先级/超时取消组合/按需下载/default 语义） | 10 runs 批量（混入 2 个非法 combo + 1 个 manifest 非法）失败隔离正确；重启不丢状态 | 2–3d | ✅（157 测试 + 真实 10 任务批量，docs/005） |
-| **P4 恢复+硬化** | ~~recovery 批量场景加固~~（**Task005R 返修交付，等待复审，不进入 P4.2**，见 docs/006：统一中断状态/工作流版本保护/manifest default 校验/幂等指纹/组合语义/恢复 8 项）、cancel_batch 辅助工具、save_dir path-jail 集成、upload_asset、错误分类打磨 | 批量执行中途 kill 重启恢复；取消工具可用 | 1–2d |
-| **P5 发布准备** | README(中英)、npx 入口、使用文档（manifest 编写指南） | 新机器按文档 10 分钟跑通 | 0.5–1d |
-
-依赖关系：P1→P2→P3→P4 严格串行；P0 独立。合计约 7–11 个工作日。
-（原 P4 中的 recovery/timeout→interrupt/path-jail/落盘已在 P2/P3 提前落地并测试，P4 收敛为取消工具、上传与硬化。）
-
----
-
-*附：本设计与审计报告由三路并行子审计综合而成（metabrain MCP/工作流层、metabrain 客户端/执行层、comfy-org 设计参考），事实性结论的 file:line 证据见 `001-codebase-audit.md`。*

@@ -33,7 +33,7 @@ export interface RunnerDeps {
   tracker: JobTracker;
 }
 
-/** node_errors 归一化条目（形状按真实 0.41 样本验证，docs/005 §七） */
+/** node_errors 归一化条目（形状按真实 0.41 样本验证，batch lifecycle contract §七） */
 export interface NormalizedNodeError {
   node: string;
   class_type?: string;
@@ -101,7 +101,7 @@ export class JobRunner {
       return { batchId: job.batch_id, index: job.idx, status: "invalid" };
     }
     const { graph, resolved } = applyParams(wf.graph, wf.manifest, params);
-    const promptId = randomUUID(); // 客户端指定 prompt_id（0.41 实测支持，docs/003 F2）；每次尝试全新 id
+    const promptId = randomUUID(); // 客户端指定 prompt_id（0.41 实测支持，ComfyUI API contract F2）；每次尝试全新 id
     const now = new Date().toISOString();
 
     // ④ 条件占位 + 事务落库（prompt_id 已持久化后才有资格 POST）

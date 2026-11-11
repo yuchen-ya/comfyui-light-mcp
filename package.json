@@ -1,6 +1,6 @@
 {
   "name": "comfyui-light-mcp",
-  "version": "0.3.0-rc.1",
+  "version": "0.3.0-rc.2",
   "description": "Lightweight ComfyUI MCP server: workflow-first, batch-native, context-light",
   "type": "module",
   "license": "MIT",
@@ -17,9 +17,16 @@
     "config.env.example",
     "README.md",
     "README.zh-CN.md",
+    "docs/usage.md",
+    "docs/usage.zh-CN.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
     "LICENSE",
     "NOTICE",
-    "THIRD_PARTY_LICENSES.txt"
+    "THIRD_PARTY_LICENSES.txt",
+    "server.json",
+    "docs/magpie.md",
+    "docs/magpie.zh-CN.md"
   ],
   "scripts": {
     "start": "node dist/index.js",
@@ -52,5 +59,6 @@
     "@typescript-eslint/typescript-estree": {
       "minimatch": "^11.0.1"
     }
-  }
+  },
+  "mcpName": "io.github.yuchen-ya/comfyui-light-mcp"
 }

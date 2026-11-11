@@ -1,6 +1,6 @@
 // Adapted from MetaBrain-Labs/ComfyUI-MCP-Server-TypeScript (MIT), commit 765c713
 // Copyright (c) 2026 MetaBrain-Labs. See THIRD_PARTY_LICENSES.txt.
-// 的 src/types/*，并按本项目需要改编。字段形状以真实环境验证为准（docs/003）。
+// 的 src/types/*，并按本项目需要改编。字段形状以真实环境验证为准（ComfyUI API contract）。
 
 /** ComfyUI API 格式工作流图：nodeId → node */
 export type WorkflowGraph = Record<string, WorkflowNode>;
@@ -76,7 +76,7 @@ export interface OutputRef {
 }
 
 /**
- * /queue 条目为元组，实测漂移（docs/003 F10）：
+ * /queue 条目为元组，实测漂移（ComfyUI API contract F10）：
  * - 旧版: [序号, 批号, prompt_id, prompt图, extra_data, outputs_to_execute] → prompt_id 在 [2]
  * - 0.41: [序号, prompt_id, prompt图, ...]                                  → prompt_id 在 [1]
  */

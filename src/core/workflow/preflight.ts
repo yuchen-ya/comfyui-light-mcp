@@ -592,7 +592,9 @@ function checkManifestCompat(p: ManifestParam, spec: NormalizedInputSpec, collec
   }
 
   // 数值 default 与输入规格 min/max 交叉校验（manifest 自身约束已在注册时校验，此处查漂移）
-  if ((p.type === "number" || p.type === "integer") && typeof p.default === "number" && (spec.kind === "int" || spec.kind === "float")) {
+  // seed=-1 is resolved by the mapper; stage 1 checks the actual graph value against the backend schema.
+  const randomSeedDefault = p.special === "seed" && p.default === -1;
+  if (!randomSeedDefault && (p.type === "number" || p.type === "integer") && typeof p.default === "number" && (spec.kind === "int" || spec.kind === "float")) {
     const lo = spec.min;
     const hi = spec.max;
     if ((lo !== undefined && p.default < lo) || (hi !== undefined && p.default > hi)) {

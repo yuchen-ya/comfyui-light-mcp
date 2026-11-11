@@ -128,6 +128,29 @@ function validParams(): Record<string, unknown> {
 }
 
 describe("Engine dry-run 零副作用与结果汇总", () => {
+  it.each([
+    { prompt: "explicit seed", seed: 7 },
+    { prompt: "default random seed" },
+    { prompt: "explicit random seed", seed: -1 }
+  ])("preserves a random seed default during dry-run: %j", async (params) => {
+    const c = ctx!;
+    const fixture = manifest();
+    fixture.params.find((param) => param.name === "seed")!.default = -1;
+    await writeFile(path.join(c.dir, "demo.manifest.json"), JSON.stringify(fixture));
+    expect((await c.engine.loadWorkflowsAsync()).errors).toEqual([]);
+    const result = await c.engine.dryRun({ workflow: "demo", runs: [{ params }] });
+    expect(result.valid).toBe(true);
+    expect(result.checks.manifest_mapping).toBe("passed");
+    expect(result.checks.node_types).toBe("passed");
+    expect(result.errors).toEqual([]);
+    expect(result.submission).toBe("not_submitted");
+    expect(counts(c.db)).toEqual([0, 0, 0]);
+    expect(c.fake.submitCalls).toBe(0);
+    expect(c.engine.scheduler.isRunning()).toBe(false);
+    expect(JSON.parse(await readFile(path.join(c.dir, "demo.manifest.json"), "utf8")).params
+      .find((param: { name: string }) => param.name === "seed").default).toBe(-1);
+  });
+
   it("合法单任务通过；第二次命中缓存；文件、DB、提交、调度与输出均无副作用", async () => {
     const c = ctx!;
     const beforeGraph = createHash("sha256").update(await readFile(path.join(c.dir, "demo.json"))).digest("hex");

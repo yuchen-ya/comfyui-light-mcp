@@ -27,6 +27,4 @@ Third-party code adapted into this repository:
 Direct runtime dependencies (each governed by its own license, retained in its
 installed npm package): @modelcontextprotocol/sdk (MIT), better-sqlite3 (MIT),
 ws (MIT), zod (MIT). better-sqlite3 embeds SQLite (public domain).
-The audited transitive dependency license inventory is maintained in the
-source repository at docs/010-task008-dependency-licenses.json. Dependency
-licenses are not replaced by this project's MIT license.
+Dependency licenses are not replaced by this project's MIT license.

@@ -27,7 +27,19 @@ const rawSchema = z.object({
   COMFYUI_URL: z
     .string()
     .default("http://127.0.0.1:8188")
-    .refine((v) => /^https?:\/\//.test(v), { message: "COMFYUI_URL 须以 http:// 或 https:// 开头" }),
+    .transform((value, ctx) => {
+      try {
+        const url = new URL(value);
+        if (!/^https?:\/\//i.test(value) || !["http:", "https:"].includes(url.protocol) ||
+            !url.hostname || url.username || url.password || value.includes("?") || value.includes("#") ||
+            /[\s\\]/.test(value)) throw new Error("invalid endpoint");
+        return url.href.replace(/\/+$/, "");
+      } catch {
+        // Never echo the input: it may contain accidentally pasted credentials.
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "COMFYUI_URL 须为有效 HTTP(S) 地址，可含路径前缀，不允许凭据、查询参数或 fragment" });
+        return z.NEVER;
+      }
+    }),
   WORKFLOWS_DIR: z.string().default("./workflows"),
   DATA_DIR: z.string().default("./data"),
   OUTPUT_DIR: z.string().default("./output"),
